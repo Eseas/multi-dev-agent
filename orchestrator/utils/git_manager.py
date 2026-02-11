@@ -59,14 +59,18 @@ class GitManager:
     def _auth_url(self) -> str:
         """토큰이 설정되어 있으면 인증 URL을 반환한다.
 
-        예: "https://github.com/user/repo.git"
-          → "https://<token>@github.com/user/repo.git"
+        GitHub 권장 형식: https://x-access-token:<token>@github.com/user/repo.git
+        - x-access-token은 GitHub에서 토큰 인증 시 사용하는 고정 username
+        - classic PAT, fine-grained PAT 모두 호환
         """
         if not self.github_token:
             return self.target_repo
 
         parsed = urlparse(self.target_repo)
-        auth_url = f"{parsed.scheme}://{self.github_token}@{parsed.hostname}"
+        auth_url = (
+            f"{parsed.scheme}://x-access-token:{self.github_token}"
+            f"@{parsed.hostname}"
+        )
         if parsed.port:
             auth_url += f":{parsed.port}"
         auth_url += parsed.path

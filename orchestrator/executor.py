@@ -10,6 +10,16 @@ import json
 
 logger = logging.getLogger(__name__)
 
+# 재시도해도 의미 없는 에러 패턴 (즉시 중단)
+_NON_RETRYABLE_PATTERNS = [
+    "hit your limit",
+    "rate limit",
+    "quota exceeded",
+    "billing",
+    "unauthorized",
+    "authentication failed",
+]
+
 
 class ClaudeExecutor:
     """
@@ -33,6 +43,12 @@ class ClaudeExecutor:
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+
+    @staticmethod
+    def _is_non_retryable(error_msg: str) -> bool:
+        """재시도해도 해결되지 않는 에러인지 판별한다."""
+        lower = error_msg.lower()
+        return any(p in lower for p in _NON_RETRYABLE_PATTERNS)
 
     def execute(
         self,
@@ -62,6 +78,7 @@ class ClaudeExecutor:
 
         attempt = 0
         last_error = None
+        timeout_count = 0
 
         while attempt < self.max_retries:
             attempt += 1
@@ -84,6 +101,37 @@ class ClaudeExecutor:
 
                 last_error = result.get('error', 'Unknown error')
                 logger.warning(f"Claude execution failed: {last_error}")
+
+                # Rate limit 등 재시도 무의미한 에러 → 즉시 중단
+                if self._is_non_retryable(last_error):
+                    logger.error(
+                        f"재시도 불가 에러 감지, 즉시 중단: {last_error}"
+                    )
+                    return {
+                        'success': False,
+                        'output': result.get('output', ''),
+                        'error': last_error,
+                        'duration': duration
+                    }
+
+                # 타임아웃 연속 발생 → 재시도해도 같은 결과
+                if 'timed out' in last_error.lower():
+                    timeout_count += 1
+                    if timeout_count >= 2:
+                        logger.error(
+                            f"연속 타임아웃 {timeout_count}회, "
+                            f"재시도 중단 (timeout={self.timeout}s 증가 필요)"
+                        )
+                        return {
+                            'success': False,
+                            'output': '',
+                            'error': (
+                                f'연속 타임아웃 {timeout_count}회. '
+                                f'config.yaml의 execution.timeout '
+                                f'(현재 {self.timeout}s)을 늘려주세요.'
+                            ),
+                            'duration': 0
+                        }
 
             except Exception as e:
                 last_error = str(e)
@@ -151,10 +199,11 @@ class ClaudeExecutor:
                         'error': ''
                     }
                 else:
+                    error_msg = stderr.strip() or stdout.strip() or f'Process exited with code {returncode}'
                     return {
                         'success': False,
                         'output': stdout,
-                        'error': stderr or f'Process exited with code {returncode}'
+                        'error': error_msg
                     }
 
             except subprocess.TimeoutExpired:
