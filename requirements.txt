@@ -1,0 +1,6 @@
+# Core dependencies
+pyyaml>=6.0
+watchdog>=3.0.0
+
+# Optional: for enhanced functionality
+# colorlog>=6.7.0  # Colored logging

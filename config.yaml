@@ -1,0 +1,24 @@
+workspace:
+  root: ./workspace
+
+project:
+  target_repo: ""              # 타겟 프로젝트 GitHub URL (필수)
+  default_branch: "main"       # 기본 브랜치
+
+prompts:
+  directory: ./prompts
+
+execution:
+  timeout: 300  # seconds
+  max_retries: 3
+
+pipeline:
+  checkpoint_phase1: true      # Phase 1 체크포인트 (기본값: true)
+  num_approaches: 1            # MVP: N=1
+
+validation:
+  enabled: true                # 기획서 유효성 검증 활성화
+
+notifications:
+  enabled: true
+  sound: true
