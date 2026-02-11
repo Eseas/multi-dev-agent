@@ -2,8 +2,9 @@ workspace:
   root: ./workspace
 
 project:
-  target_repo: ""              # 타겟 프로젝트 GitHub URL (필수)
-  default_branch: "main"       # 기본 브랜치
+  target_repo: "https://github.com/Eseas/DailyWord.git"              # 타겟 프로젝트 GitHub URL (필수)
+  default_branch: "master"       # 기본 브랜치
+  github_token: ""               # GitHub Personal Access Token (private repo용)
 
 prompts:
   directory: ./prompts

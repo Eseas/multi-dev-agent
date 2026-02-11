@@ -42,6 +42,7 @@ workspace/
 .DS_Store
 Thumbs.db
 
-# Config (may contain sensitive data)
+# Config (contains sensitive data like GitHub tokens)
+config.yaml
 config.local.yaml
 decision.json

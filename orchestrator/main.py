@@ -71,10 +71,12 @@ class Orchestrator:
         # Git 관리자
         target_repo = self.config['project'].get('target_repo', '')
         default_branch = self.config['project'].get('default_branch', 'main')
+        github_token = self.config['project'].get('github_token', '')
         self.git_manager = GitManager(
             workspace_root=self.workspace_root,
             target_repo=target_repo,
-            default_branch=default_branch
+            default_branch=default_branch,
+            github_token=github_token
         )
 
         # 알림
@@ -871,7 +873,8 @@ class Orchestrator:
             },
             'project': {
                 'target_repo': '',
-                'default_branch': 'main'
+                'default_branch': 'main',
+                'github_token': ''
             },
             'prompts': {
                 'directory': './prompts'

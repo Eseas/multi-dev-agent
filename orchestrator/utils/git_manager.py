@@ -26,16 +26,19 @@ class GitManager:
         self,
         workspace_root: Path,
         target_repo: str,
-        default_branch: str = "main"
+        default_branch: str = "main",
+        github_token: str = ""
     ):
         """
         Args:
             workspace_root: 워크스페이스 루트 경로
             target_repo: 타겟 프로젝트 GitHub URL
             default_branch: 기본 브랜치 이름
+            github_token: GitHub Personal Access Token (private repo용)
         """
         self.workspace_root = Path(workspace_root)
         self.target_repo = target_repo
+        self.github_token = github_token
         self.default_branch = default_branch
         self.cache_dir = self.workspace_root / '.cache'
         self.clone_dir = self.cache_dir / self._repo_name()
@@ -52,6 +55,22 @@ class GitManager:
         if name.endswith('.git'):
             name = name[:-4]
         return name or 'project'
+
+    def _auth_url(self) -> str:
+        """토큰이 설정되어 있으면 인증 URL을 반환한다.
+
+        예: "https://github.com/user/repo.git"
+          → "https://<token>@github.com/user/repo.git"
+        """
+        if not self.github_token:
+            return self.target_repo
+
+        parsed = urlparse(self.target_repo)
+        auth_url = f"{parsed.scheme}://{self.github_token}@{parsed.hostname}"
+        if parsed.port:
+            auth_url += f":{parsed.port}"
+        auth_url += parsed.path
+        return auth_url
 
     def ensure_clone(self) -> Path:
         """타겟 프로젝트가 clone되어 있는지 확인하고, 없으면 clone한다.
@@ -72,13 +91,21 @@ class GitManager:
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
+        auth_url = self._auth_url()
+
         if self.clone_dir.exists() and (self.clone_dir / '.git').exists():
             logger.info(f"기존 clone 사용, fetch 실행: {self.clone_dir}")
+            # 토큰이 변경되었을 수 있으므로 remote URL 갱신
+            if self.github_token:
+                self._run_git(
+                    ['remote', 'set-url', 'origin', auth_url],
+                    cwd=self.clone_dir
+                )
             self._run_git(['fetch', 'origin'], cwd=self.clone_dir)
         else:
             logger.info(f"타겟 프로젝트 clone: {self.target_repo}")
             self._run_git([
-                'clone', self.target_repo, str(self.clone_dir)
+                'clone', auth_url, str(self.clone_dir)
             ])
 
         return self.clone_dir

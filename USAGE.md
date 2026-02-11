@@ -61,30 +61,70 @@
 
 ### 사전 요구사항
 
-- Python 3.8+
-- git
-- [Claude Code CLI](https://claude.ai/claude-code) (시스템 PATH에 `claude` 명령이 있어야 함)
+- **Python 3.8+** (`python3 --version`으로 확인)
+- **git** (`git --version`으로 확인)
+- **Claude Code CLI** (시스템 PATH에 `claude` 명령이 있어야 함)
 
-### 설치
+### 방법 1: pip install (권장)
+
+프로젝트를 패키지로 설치합니다. `multi-agent-dev` 명령이 시스템에 등록됩니다.
 
 ```bash
 cd /path/to/multi-agent-dev-system
-pip install -r requirements.txt
+
+# 일반 설치
+pip3 install .
+
+# 개발 모드 (코드 수정 시 재설치 불필요)
+pip3 install -e .
+
+# 개발 의존성 포함 (pytest, black 등)
+pip3 install -e ".[dev]"
 ```
 
-`requirements.txt` 내용:
+설치 후 어디서든 `multi-agent-dev` 명령으로 실행할 수 있습니다:
+```bash
+multi-agent-dev init
+multi-agent-dev run -s planning-spec.md
+multi-agent-dev status
 ```
-pyyaml>=6.0
-watchdog>=3.0.0
+
+### 방법 2: 직접 실행 (설치 없이)
+
+의존성만 설치하고 `python3 cli.py`로 직접 실행합니다.
+
+```bash
+cd /path/to/multi-agent-dev-system
+
+# 의존성 설치
+pip3 install -r requirements.txt
 ```
+
+이후 프로젝트 디렉토리에서 `python3 cli.py`로 실행합니다:
+```bash
+python3 cli.py init
+python3 cli.py run -s planning-spec.md
+python3 cli.py status
+```
+
+### 의존성 목록
+
+| 패키지 | 버전 | 용도 |
+|--------|------|------|
+| `pyyaml` | >=6.0 | config.yaml 파싱 |
+| `watchdog` | >=3.0.0 | 디렉토리 감시 (watch 모드) |
 
 ### 초기화
 
 ```bash
-python cli.py init
+# 방법 1로 설치한 경우
+multi-agent-dev init
+
+# 방법 2로 실행하는 경우
+python3 cli.py init
 ```
 
-`config.yaml` 파일이 생성됩니다. 반드시 `project.target_repo`를 설정해야 합니다.
+`config.yaml` 파일이 생성됩니다. **반드시 `project.target_repo`를 설정해야 합니다.**
 
 ---
 
@@ -97,6 +137,7 @@ workspace:
 project:
   target_repo: ""                  # [필수] 타겟 프로젝트 GitHub URL
   default_branch: "main"           # 기본 브랜치 이름
+  github_token: ""                 # GitHub Personal Access Token (private repo용)
 
 prompts:
   directory: ./prompts             # 에이전트 프롬프트 파일 디렉토리
@@ -119,15 +160,35 @@ notifications:
   sound: true                      # 알림 사운드 활성화
 ```
 
+> **주의**: `config.yaml`에는 GitHub 토큰 등 민감 정보가 포함될 수 있어 `.gitignore`에 등록되어 있습니다. 절대 커밋하지 마세요.
+
 ### 설정 항목 설명
 
 | 항목 | 설명 | 기본값 |
 |------|------|--------|
 | `project.target_repo` | 구현 대상 프로젝트의 Git URL. 시스템이 이 저장소를 clone한 후 worktree를 생성 | (빈 문자열, 필수 설정) |
+| `project.github_token` | GitHub Personal Access Token. private repo 접근 시 필수. `https://<token>@github.com/...` 형태로 자동 변환됨 | (빈 문자열) |
 | `pipeline.num_approaches` | 기획서에서 N을 명시하지 않았을 때 사용하는 기본 구현 개수 | 1 |
 | `pipeline.checkpoint_phase1` | `false`로 설정하면 Phase 1 후 승인 없이 바로 Phase 2로 진행 | true |
 | `validation.strict_mode` | `true`로 설정하면 "기술 스택 미명시" 같은 경고도 검증 실패로 처리 | false |
 | `validation.auto_revalidate` | `watch` 모드에서 이미 처리한 기획서가 수정되면 자동으로 재실행 | true |
+
+### GitHub 토큰 설정 방법
+
+private 저장소를 사용하려면 GitHub Personal Access Token이 필요합니다.
+
+1. GitHub > Settings > Developer settings > Personal access tokens > Tokens (classic)
+2. **Generate new token** 클릭
+3. 권한: `repo` (Full control of private repositories) 선택
+4. 생성된 토큰을 `config.yaml`에 입력:
+
+```yaml
+project:
+  target_repo: "https://github.com/your-org/your-private-repo.git"
+  github_token: "ghp_xxxxxxxxxxxxxxxxxxxx"
+```
+
+토큰이 설정되면 clone/fetch 시 자동으로 인증됩니다.
 
 ---
 
@@ -617,6 +678,19 @@ project:
   target_repo: "https://github.com/your-org/your-project"
 ```
 
+### Git clone 시 인증 실패 (Authentication failed / 403)
+
+**원인**: private 저장소에 토큰 없이 접근하려고 함
+
+**해결**: `config.yaml`에 GitHub 토큰 설정
+```yaml
+project:
+  target_repo: "https://github.com/your-org/your-private-repo.git"
+  github_token: "ghp_xxxxxxxxxxxxxxxxxxxx"
+```
+
+토큰이 만료되었거나 권한이 부족할 수도 있습니다. `repo` 권한이 있는지 확인하세요.
+
 ### "Claude Code CLI not found"
 
 **원인**: `claude` 명령이 PATH에 없음
@@ -665,30 +739,34 @@ python cli.py select <task-id> <impl-id>
 
 ## 부록: 자주 사용하는 명령 모음
 
+> `multi-agent-dev`는 `pip3 install -e .` 설치 시 사용 가능합니다.
+> 설치 없이 실행할 때는 `python3 cli.py`로 대체하세요.
+
 ```bash
 # === 초기 설정 ===
-python cli.py init                              # config.yaml 생성
+multi-agent-dev init                              # config.yaml 생성
+# 또는: python3 cli.py init
 
 # === 실행 ===
-python cli.py run -s spec.md                    # 파이프라인 실행
-python cli.py run -s spec.md -v                 # 상세 로깅
-python cli.py watch                             # 감시 모드
+multi-agent-dev run -s spec.md                    # 파이프라인 실행
+multi-agent-dev run -s spec.md -v                 # 상세 로깅
+multi-agent-dev watch                             # 감시 모드
 
 # === 체크포인트 (Phase 1 후) ===
-python cli.py approve <task-id>                 # 전체 승인
-python cli.py approve <task-id> --approaches 1,2  # 개별 승인
-python cli.py approve <task-id> --reject 3      # 개별 반려
-python cli.py revise <task-id> -f "피드백"       # 수정 요청
-python cli.py abort <task-id>                   # 중단
+multi-agent-dev approve <task-id>                 # 전체 승인
+multi-agent-dev approve <task-id> --approaches 1,2  # 개별 승인
+multi-agent-dev approve <task-id> --reject 3      # 개별 반려
+multi-agent-dev revise <task-id> -f "피드백"       # 수정 요청
+multi-agent-dev abort <task-id>                   # 중단
 
 # === 선택 (Phase 5, N>=2) ===
-python cli.py select <task-id> <impl-id>        # 구현 선택
+multi-agent-dev select <task-id> <impl-id>        # 구현 선택
 
 # === 상태 확인 ===
-python cli.py status                            # 전체 목록
-python cli.py status <task-id>                  # 상세 상태
+multi-agent-dev status                            # 전체 목록
+multi-agent-dev status <task-id>                  # 상세 상태
 
 # === 통합 (Phase 6 완료 후) ===
 cd <타겟-프로젝트>
-git merge <task-id>/impl-<N>                    # 선택된 브랜치 병합
+git merge <task-id>/impl-<N>                      # 선택된 브랜치 병합
 ```
