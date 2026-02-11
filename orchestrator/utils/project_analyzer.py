@@ -652,9 +652,9 @@ class ProjectAnalyzer:
         relevant_modules: List[str],
         max_lines: int
     ) -> str:
-        """관련 모듈의 핵심 코드를 포맷한다."""
+        """관련 모듈의 핵심 코드를 시그니처 형태로 포맷한다."""
         modules = profile.get('modules', {})
-        sections = ['### 관련 코드 (핵심 파일)', '']
+        sections = ['### 관련 코드 (시그니처)', '']
 
         for mod_name in relevant_modules:
             mod_info = modules.get(mod_name, {})
@@ -671,23 +671,194 @@ class ProjectAnalyzer:
                     continue
 
                 try:
-                    content = file_path.read_text(errors='replace')
-                    lines = content.split('\n')[:max_lines]
-                    truncated = '\n'.join(lines)
+                    # 시그니처만 추출
+                    signature_info = self._extract_signatures(file_path)
 
-                    ext = file_path.suffix.lstrip('.')
                     sections.append(f"\n**{cls['name']}** (`{cls['path']}`)")
-                    sections.append(f"```{ext}")
-                    sections.append(truncated)
-                    if len(content.split('\n')) > max_lines:
-                        sections.append(f"// ... ({len(content.split(chr(10)))} lines total)")
-                    sections.append('```')
-                except Exception:
+
+                    # 패키지
+                    if signature_info.get('package'):
+                        sections.append(f"Package: `{signature_info['package']}`")
+
+                    # 어노테이션
+                    if cls.get('annotations'):
+                        sections.append(f"Annotations: @{', @'.join(cls['annotations'])}")
+
+                    # 상속/구현
+                    if cls.get('extends'):
+                        sections.append(f"Extends: `{cls['extends']}`")
+                    if cls.get('implements'):
+                        sections.append(f"Implements: `{', '.join(cls['implements'])}`")
+
+                    # 필드 (시그니처만)
+                    if signature_info.get('fields'):
+                        sections.append("\nFields:")
+                        for field in signature_info['fields'][:10]:  # 최대 10개
+                            annotations = ' '.join(f"@{a}" for a in field.get('annotations', []))
+                            sections.append(f"  {annotations} {field['type']} {field['name']}")
+
+                    # 메서드 (시그니처만)
+                    if signature_info.get('methods'):
+                        sections.append("\nMethods:")
+                        for method in signature_info['methods'][:15]:  # 최대 15개
+                            annotations = ' '.join(f"@{a}" for a in method.get('annotations', []))
+                            sections.append(f"  {annotations} {method['signature']}")
+
+                    sections.append('')
+
+                except Exception as e:
+                    logger.debug(f"시그니처 추출 실패 {file_path}: {e}")
                     continue
 
             sections.append('')
 
         return '\n'.join(sections)
+
+    def _extract_signatures(self, file_path: Path) -> Dict[str, Any]:
+        """Java 파일에서 필드와 메서드 시그니처만 추출한다."""
+        try:
+            content = file_path.read_text(errors='replace')
+        except Exception:
+            return {}
+
+        signatures = {
+            'package': self._extract_package_name(content),
+            'fields': self._extract_field_signatures(content),
+            'methods': self._extract_method_signatures_detailed(content),
+        }
+
+        return signatures
+
+    def _extract_package_name(self, content: str) -> Optional[str]:
+        """패키지명 추출."""
+        match = re.search(r'package\s+([\w.]+);', content)
+        return match.group(1) if match else None
+
+    def _extract_field_signatures(self, content: str) -> List[Dict]:
+        """필드 시그니처 추출 (타입, 이름, 어노테이션만).
+
+        단순화된 접근: 클래스 depth 추적 대신 패턴 매칭만 사용.
+        일부 false positive는 허용 (큰 문제 아님).
+        """
+        fields = []
+
+        try:
+            # 주석 제거 (간단히)
+            content = re.sub(r'//.*', '', content)  # 한 줄 주석
+            content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)  # 블록 주석
+
+            # 필드 패턴: (접근제어자) (modifiers) (타입) (이름);
+            # 간단하게: private/public/protected로 시작하고 ( 없고 ; 또는 = 있음
+            pattern = r'''
+                ((?:@\w+(?:\([^)]*\))?\s+)*)      # 어노테이션들 (선택)
+                (private|protected|public)\s+     # 접근제어자
+                ((?:static|final)\s+)*            # modifiers (선택)
+                ([\w<>[\].,?\s]+)\s+              # 타입 (제네릭 포함)
+                (\w+)                             # 필드 이름
+                \s*[;=]                           # ; 또는 = 로 끝남
+            '''
+
+            for match in re.finditer(pattern, content, re.VERBOSE):
+                annotations_raw = match.group(1) or ''
+                type_name = match.group(4).strip()
+                field_name = match.group(5)
+
+                # ( 가 있으면 메서드일 가능성 높음 → 스킵
+                if '(' in match.group(0):
+                    continue
+
+                # 어노테이션 추출
+                annotations = re.findall(r'@(\w+)', annotations_raw)
+
+                fields.append({
+                    'type': type_name,
+                    'name': field_name,
+                    'annotations': annotations
+                })
+
+        except Exception as e:
+            logger.debug(f"필드 추출 중 에러 (무시): {e}")
+
+        return fields[:20]  # 최대 20개로 제한
+
+    def _extract_method_signatures_detailed(self, content: str) -> List[Dict]:
+        """메서드 시그니처 추출 (구현부 제외, getter/setter 필터링).
+
+        단순화된 접근: 복잡한 파싱 대신 패턴 매칭 위주.
+        일부 false positive/negative는 허용 (큰 문제 아님).
+        """
+        methods = []
+
+        try:
+            # 주석 제거 (// 및 /* */)
+            content = re.sub(r'//.*', '', content)
+            content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+
+            # 메서드 패턴
+            # (어노테이션) (접근제어자) (modifiers) (리턴타입) (메서드명) (파라미터)
+            pattern = r'''
+                (@\w+(?:\([^)]*\))?\s*)*          # 어노테이션들
+                (public|private|protected)\s+     # 접근 제어자
+                (static\s+|final\s+)*             # static, final
+                ([\w<>[\],\s]+)\s+                # 리턴 타입
+                (\w+)\s*                          # 메서드 이름
+                \(([^)]*)\)                       # 파라미터
+                \s*(?:throws\s+[\w\s,]+)?         # throws (선택)
+                \s*[{;]                           # { 또는 ; (인터페이스)
+            '''
+
+            for match in re.finditer(pattern, content, re.VERBOSE | re.MULTILINE):
+                annotations_raw = match.group(1) or ''
+                access = match.group(2)
+                modifiers = (match.group(3) or '').strip()
+                return_type = match.group(4).strip()
+                method_name = match.group(5)
+                params = match.group(6).strip()
+
+                # 어노테이션 파싱
+                annotations = re.findall(r'@(\w+)', annotations_raw)
+
+                # getter/setter 제외 (중요한 어노테이션 있으면 포함)
+                is_getter_setter = (
+                    method_name.startswith('get') or
+                    method_name.startswith('set') or
+                    method_name.startswith('is')
+                )
+
+                important_annotations = {
+                    'Transactional', 'PostMapping', 'GetMapping',
+                    'PutMapping', 'DeleteMapping', 'PatchMapping',
+                    'RequestMapping', 'Override', 'Bean',
+                    'PreAuthorize', 'PostAuthorize', 'Async'
+                }
+
+                has_important = any(ann in important_annotations for ann in annotations)
+
+                # getter/setter이면서 중요한 어노테이션 없으면 스킵
+                if is_getter_setter and not has_important:
+                    continue
+
+                # 시그니처 조립
+                sig_parts = [access]
+                if modifiers:
+                    sig_parts.append(modifiers)
+                sig_parts.extend([return_type, method_name + '(' + params + ')'])
+
+                signature = ' '.join(sig_parts)
+                signature = re.sub(r'\s+', ' ', signature)  # 공백 정리
+
+                methods.append({
+                    'name': method_name,
+                    'signature': signature,
+                    'return_type': return_type,
+                    'annotations': annotations,
+                    'is_important': not is_getter_setter or has_important
+                })
+
+        except Exception as e:
+            logger.debug(f"메서드 추출 중 에러 (무시): {e}")
+
+        return methods[:25]  # 최대 25개로 제한
 
     # ── 유틸리티 ──────────────────────────────────────────
 
