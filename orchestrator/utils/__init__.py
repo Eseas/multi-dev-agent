@@ -6,6 +6,7 @@ from .git_manager import GitManager, GitError
 from .notifier import SystemNotifier
 from .spec_parser import parse_planning_spec, PlanningSpec, MethodSpec
 from .spec_validator import validate_spec, ValidationResult, write_validation_errors
+from .project_analyzer import ProjectAnalyzer
 
 __all__ = [
     'atomic_write',
@@ -19,4 +20,5 @@ __all__ = [
     'validate_spec',
     'ValidationResult',
     'write_validation_errors',
+    'ProjectAnalyzer',
 ]

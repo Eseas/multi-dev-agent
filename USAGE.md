@@ -26,14 +26,22 @@
 [Validation] 기획서 검증 (규칙 기반, AI 비용 없음)
     |
     v
-[Phase 1] Architect: 기획서 → N개 구현 설계
+[Git Setup] 타겟 프로젝트 clone/fetch + 최신 상태 동기화
+    |
+    v
+[Project Analysis] 프로젝트 사전 분석 (Python 기반, AI 비용 없음)
+    |               → 프로젝트 구조, 기술 스택, 핵심 모듈 분석
+    |               → .project-profile.json 캐싱 (commit SHA 기반)
+    |               → 기획서 관련 모듈만 컨텍스트 생성
+    v
+[Phase 1] Architect: 기획서 + 프로젝트 컨텍스트 → N개 구현 설계
     |
     v
 [Checkpoint] 사용자 검토 + 승인/수정/중단
     |
     v
 [Phase 2] Implementer x N: 각 설계를 독립 git worktree에서 구현 (병렬)
-    |
+    |                        + 프로젝트 컨텍스트 제공 (탐색 시간 단축)
     v
 [Phase 3] Reviewer + Tester x N: 각 구현을 리뷰/테스트 (병렬)
     |
@@ -281,11 +289,14 @@ python cli.py run -s planning-spec.md -c my-config.yaml
 ### 실행 후 흐름
 
 1. 기획서 검증 → 파싱 → Git clone/fetch
-2. Phase 1 (Architect) 실행
-3. **체크포인트**: 터미널에 "승인 대기 중" 메시지 출력, 시스템 알림 발생
-4. 다른 터미널에서 `approve` 명령 실행
-5. Phase 2~6 자동 진행
-6. 완료 시 통합 브랜치 정보 출력
+2. **프로젝트 분석**: 타겟 프로젝트 구조 자동 분석 (~1-2초)
+   - `.project-profile.json` 캐시 확인 (있으면 재사용, 없으면 생성)
+   - 기획서 키워드와 관련된 모듈만 컨텍스트 생성
+3. Phase 1 (Architect) 실행 - 프로젝트 컨텍스트 활용으로 탐색 시간 단축
+4. **체크포인트**: 터미널에 "승인 대기 중" 메시지 출력, 시스템 알림 발생
+5. 다른 터미널에서 `approve` 명령 실행
+6. Phase 2~6 자동 진행 - Implementer도 프로젝트 컨텍스트 활용
+7. 완료 시 통합 브랜치 정보 출력
 
 ---
 
@@ -460,10 +471,10 @@ python cli.py watch [-c config.yaml]
 ### N=1 (단일 구현)
 
 ```
-기획서 검증 → 파싱 → Git clone
-    → Phase 1: Architect (구현 설계)
+기획서 검증 → 파싱 → Git clone/fetch → 프로젝트 분석
+    → Phase 1: Architect (구현 설계, 프로젝트 컨텍스트 활용)
     → [Checkpoint: 승인 대기]
-    → Phase 2: Implementer 1개 (순차 실행)
+    → Phase 2: Implementer 1개 (순차 실행, 프로젝트 컨텍스트 활용)
     → Phase 3: Reviewer + Tester 1세트 (순차 실행)
     → Phase 6: 통합 알림 (브랜치 정보)
 ```
@@ -474,15 +485,38 @@ python cli.py watch [-c config.yaml]
 ### N>=2 (복수 구현)
 
 ```
-기획서 검증 → 파싱 → Git clone
-    → Phase 1: Architect (N개 구현 설계)
+기획서 검증 → 파싱 → Git clone/fetch → 프로젝트 분석
+    → Phase 1: Architect (N개 구현 설계, 프로젝트 컨텍스트 활용)
     → [Checkpoint: 승인/개별승인/수정/중단 대기]
-    → Phase 2: Implementer N개 (ThreadPoolExecutor 병렬)
+    → Phase 2: Implementer N개 (ThreadPoolExecutor 병렬, 프로젝트 컨텍스트 활용)
     → Phase 3: Reviewer + Tester N세트 (ThreadPoolExecutor 병렬)
     → Phase 4: Comparator (N개 비교, 순위 매기기)
     → Phase 5: Human Selection (사용자가 select 명령으로 선택)
     → Phase 6: 통합 알림 (선택된 브랜치 정보)
 ```
+
+### 프로젝트 사전 분석 (Project Analysis)
+
+Git clone 후, Phase 1 전에 자동으로 실행됩니다:
+
+**목적**: Claude가 대규모 프로젝트를 처음부터 탐색하는 시간을 대폭 단축
+
+**동작 방식**:
+1. **프로젝트 타입 감지**: Gradle, Maven, npm, Python 등
+2. **모듈 구조 분석**: 각 모듈의 소스 루트, 주요 클래스(Entity, Repository, Service 등) 스캔
+3. **아키텍처 패턴 감지**: 헥사고날, 레이어드 등
+4. **프로필 캐싱**: `.project-profile.json` 파일로 커밋 SHA 기반 캐싱
+   - 같은 커밋이면 재사용, 변경되면 증분 업데이트
+5. **타겟 컨텍스트 생성**: 기획서 키워드와 매칭되는 모듈만 컨텍스트 추출
+
+**2-tier 컨텍스트 구조**:
+- **정적 프로필** (캐시됨): 프로젝트 전체 개요, 모듈 목록, 기술 스택
+- **동적 타겟 컨텍스트** (매번 생성): 기획서 관련 모듈의 실제 코드
+
+**성능 개선**:
+- Architect: ~252s → ~60-90s 예상
+- Implementer: ~300s+ → ~120-180s 예상
+- **AI 비용 절감**: Python 기반 분석은 무료, Claude는 필요한 부분만 탐색
 
 ### 각 Phase에서 생성되는 파일
 
@@ -493,6 +527,7 @@ workspace/tasks/task-YYYYMMDD-HHMMSS/
 ├── timeline.log             # 이벤트 타임라인 로그
 ├── checkpoint-decision.json # Phase 1 체크포인트 결정 (임시, 처리 후 삭제)
 ├── validation-errors.md     # 검증 실패 시 오류 보고서
+├── project-profile.json     # 프로젝트 분석 결과 (디버깅용 복사본)
 │
 ├── architect/               # Phase 1 출력
 │   └── (Architect 결과물)
@@ -515,6 +550,16 @@ workspace/tasks/task-YYYYMMDD-HHMMSS/
 ├── selection-decision.json  # Phase 5: 사용자의 선택 결과
 │
 └── integration-info.json    # Phase 6: 통합 브랜치 정보
+```
+
+**프로젝트 캐시 구조** (Git clone 캐시):
+
+```
+workspace/.cache/
+└── <project-name>/              # 타겟 프로젝트 clone (공유)
+    ├── .git/
+    ├── .project-profile.json    # 프로젝트 분석 캐시 (commit SHA 기반)
+    └── (소스 파일들)
 ```
 
 ### Git worktree 구조
@@ -562,6 +607,7 @@ multi-agent-dev-system/
 │   └── utils/                     #   유틸리티
 │       ├── atomic_write.py        #     원자적 파일 쓰기
 │       ├── git_manager.py         #     Git clone/worktree 관리
+│       ├── project_analyzer.py    #     프로젝트 사전 분석 (Python 기반)
 │       ├── logger.py              #     로깅 설정
 │       ├── notifier.py            #     시스템 알림 (macOS/Linux/Windows)
 │       ├── spec_parser.py         #     기획서 파싱 (마크다운 → 구조체)
@@ -734,6 +780,32 @@ python cli.py select <task-id> <impl-id>
 1. 각 worktree 디렉토리에서 에러 로그 확인
 2. 기획서를 더 구체적으로 수정
 3. `timeline.log`에서 실패 지점 확인
+
+### 프로젝트 분석이 느리거나 실패
+
+**원인**: 대규모 프로젝트 또는 비표준 구조
+
+**해결**:
+1. `workspace/.cache/<project-name>/.project-profile.json` 확인
+   - 파일이 생성되지 않았으면 프로젝트 타입 감지 실패
+2. 지원 프로젝트 타입: Gradle, Maven, npm (package.json), Python (setup.py/pyproject.toml)
+3. 커스텀 프로젝트 구조는 아직 지원하지 않을 수 있음
+4. 캐시 파일 삭제 후 재실행: `rm workspace/.cache/<project-name>/.project-profile.json`
+
+### Architect/Implementer가 여전히 프로젝트를 탐색하는 시간이 김
+
+**원인**:
+- 프로젝트 프로필이 캐시되지 않았거나
+- 기획서 키워드가 너무 광범위하여 많은 모듈이 포함됨
+
+**해결**:
+1. 프로필 캐시 확인: `workspace/tasks/<task-id>/project-profile.json` 파일 확인
+2. 기획서에 구체적인 모듈명/패키지명 명시
+   - 예: "module-admin의 로그인 기능" (명확)
+   - 나쁜 예: "시스템의 인증" (모호, 모든 모듈 포함될 수 있음)
+3. 타겟 컨텍스트 크기 확인 (로그에 "컨텍스트 N자" 출력)
+   - 30,000자 이하: 적정
+   - 50,000자 이상: 너무 많은 모듈 포함, 기획서를 더 구체적으로 수정
 
 ---
 

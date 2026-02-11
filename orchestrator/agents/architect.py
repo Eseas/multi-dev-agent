@@ -41,6 +41,7 @@ class ArchitectAgent(BaseAgent):
         spec_content = context.get('spec_content', '')
         num_approaches = context.get('num_approaches', 1)
         project_path = context.get('project_path', '')
+        project_context = context.get('project_context', '')
 
         if not spec_content:
             return {
@@ -55,7 +56,8 @@ class ArchitectAgent(BaseAgent):
             self.prompt_file,
             spec_content=spec_content,
             num_approaches=num_approaches,
-            project_path=project_path
+            project_path=project_path,
+            project_context=project_context,
         )
 
         # Claude 실행 (타겟 프로젝트 디렉토리에서)

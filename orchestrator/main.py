@@ -23,6 +23,7 @@ from .utils import (
     parse_planning_spec,
     validate_spec,
     write_validation_errors,
+    ProjectAnalyzer,
 )
 from .agents import (
     ArchitectAgent,
@@ -191,6 +192,35 @@ class Orchestrator:
 
             self._log_timeline(timeline_file, "PHASE", "git_setup_done")
 
+            # === 프로젝트 사전 분석 ===
+            self._log_timeline(
+                timeline_file, "PHASE", "project_analysis_start"
+            )
+            self._update_manifest(
+                manifest_file, manifest, 'project_analysis'
+            )
+
+            analyzer = ProjectAnalyzer(clone_path)
+            project_profile = analyzer.get_or_create_profile()
+            project_context = analyzer.generate_target_context(
+                project_profile, spec_content
+            )
+
+            self.logger.info(
+                f"프로젝트 분석 완료: "
+                f"{len(project_profile.get('modules', {}))}개 모듈, "
+                f"컨텍스트 {len(project_context)}자"
+            )
+
+            # 프로필을 task 디렉토리에도 저장 (디버깅용)
+            atomic_write(
+                task_dir / 'project-profile.json', project_profile
+            )
+
+            self._log_timeline(
+                timeline_file, "PHASE", "project_analysis_done"
+            )
+
             # === Phase 1: Architect ===
             self._log_timeline(timeline_file, "PHASE", "architect_start")
             self._update_manifest(manifest_file, manifest, 'phase1_architect')
@@ -208,7 +238,8 @@ class Orchestrator:
             arch_result = architect.run({
                 'spec_content': spec_content,
                 'num_approaches': num_approaches,
-                'project_path': str(clone_path)
+                'project_path': str(clone_path),
+                'project_context': project_context,
             })
 
             if not arch_result['success']:
@@ -296,7 +327,7 @@ class Orchestrator:
             )
 
             impl_results = self._run_implementations_parallel(
-                task_id, approaches, spec_content
+                task_id, approaches, spec_content, project_context
             )
 
             manifest['phases']['phase2'] = {
@@ -400,14 +431,16 @@ class Orchestrator:
         self,
         task_id: str,
         approaches: List[Dict],
-        spec_content: str
+        spec_content: str,
+        project_context: str = ''
     ) -> List[Dict[str, Any]]:
         """N개 Implementer를 병렬로 실행한다."""
         if len(approaches) == 1:
             # N=1: 순차 실행 (오버헤드 방지)
             return [
                 self._run_single_implementation(
-                    task_id, 1, approaches[0], spec_content
+                    task_id, 1, approaches[0],
+                    spec_content, project_context
                 )
             ]
 
@@ -418,7 +451,8 @@ class Orchestrator:
             for i, approach in enumerate(approaches, start=1):
                 future = executor.submit(
                     self._run_single_implementation,
-                    task_id, i, approach, spec_content
+                    task_id, i, approach,
+                    spec_content, project_context
                 )
                 future_to_idx[future] = i - 1
 
@@ -445,7 +479,8 @@ class Orchestrator:
         task_id: str,
         impl_id: int,
         approach: Dict,
-        spec_content: str
+        spec_content: str,
+        project_context: str = ''
     ) -> Dict[str, Any]:
         """단일 Implementer를 실행한다."""
         worktree_path = self.git_manager.create_worktree(task_id, impl_id)
@@ -465,7 +500,8 @@ class Orchestrator:
 
         impl_result = implementer.run({
             'approach': approach,
-            'spec_content': spec_content
+            'spec_content': spec_content,
+            'project_context': project_context,
         })
 
         change_summary = {}

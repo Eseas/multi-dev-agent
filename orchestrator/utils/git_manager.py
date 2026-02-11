@@ -79,13 +79,14 @@ class GitManager:
     def ensure_clone(self) -> Path:
         """타겟 프로젝트가 clone되어 있는지 확인하고, 없으면 clone한다.
 
-        이미 clone되어 있으면 fetch로 최신 상태 동기화.
+        이미 clone되어 있으면 pull로 최신 상태 동기화
+        (fetch + reset으로 working tree도 갱신).
 
         Returns:
             clone된 디렉토리 경로
 
         Raises:
-            GitError: clone 또는 fetch 실패 시
+            GitError: clone 또는 pull 실패 시
         """
         if not self.target_repo:
             raise GitError(
@@ -98,14 +99,20 @@ class GitManager:
         auth_url = self._auth_url()
 
         if self.clone_dir.exists() and (self.clone_dir / '.git').exists():
-            logger.info(f"기존 clone 사용, fetch 실행: {self.clone_dir}")
+            logger.info(f"기존 clone 사용, pull 실행: {self.clone_dir}")
             # 토큰이 변경되었을 수 있으므로 remote URL 갱신
             if self.github_token:
                 self._run_git(
                     ['remote', 'set-url', 'origin', auth_url],
                     cwd=self.clone_dir
                 )
+            # fetch + reset으로 working tree를 최신화
+            # (프로젝트 분석기가 파일을 직접 읽으므로 working tree 동기화 필수)
             self._run_git(['fetch', 'origin'], cwd=self.clone_dir)
+            self._run_git(
+                ['reset', '--hard', f'origin/{self.default_branch}'],
+                cwd=self.clone_dir
+            )
         else:
             logger.info(f"타겟 프로젝트 clone: {self.target_repo}")
             self._run_git([
@@ -113,6 +120,17 @@ class GitManager:
             ])
 
         return self.clone_dir
+
+    def get_current_commit(self) -> str:
+        """clone된 프로젝트의 현재 HEAD commit SHA를 반환한다."""
+        try:
+            return self._run_git(
+                ['log', '-1', '--format=%H'],
+                cwd=self.clone_dir,
+                capture=True
+            ).strip()
+        except GitError:
+            return 'unknown'
 
     def create_worktree(self, task_id: str, impl_id: int) -> Path:
         """구현을 위한 git worktree를 생성한다.

@@ -1,29 +1,34 @@
 # 🤖 Multi-Agent Development System
 
-**인간-AI 협업 기획**과 **AI 자동 구현**을 결합한 다중 에이전트 개발 시스템입니다.
+**하나의 기획서, N개의 AI 구현, 최적의 선택**
 
-하나의 아이디어를 여러 방법으로 구현하고, AI가 자동으로 리뷰, 테스트, 비교하여 최적의 솔루션을 찾아드립니다.
+인간-AI 협업 기획과 AI 자동 구현을 결합한 다중 에이전트 개발 시스템입니다.
+여러 구현 방향을 병렬로 탐색하고, AI가 자동으로 리뷰/테스트/비교하여 최적의 솔루션을 찾습니다.
 
 ---
 
 ## 🎯 핵심 개념
 
 ```
-당신의 아이디어
+당신의 아이디어 (planning-spec.md)
     ↓
-📝 Phase 0: 기획 (사람 + Claude Code 대화)
+🔍 프로젝트 자동 분석 (Python, 1-2초, AI 비용 없음)
     ↓
-🤖 Phase 1-6: 자동 구현 (AI 에이전트들)
-    ↓        ↑
-    └─ N = 1~3개 (적응형 조정)
+🤖 Phase 1-6: AI 에이전트 자동 실행
+    ├─ Architect: 기획서 → N개 구현 설계
+    ├─ Implementer x N: 병렬 구현 (git worktree 격리)
+    ├─ Reviewer + Tester x N: 병렬 리뷰/테스트
+    ├─ Comparator: N개 비교 분석 (N≥2)
+    └─ Human: 최종 선택 (N≥2)
     ↓
-✅ 최적의 구현 선택
+✅ 선택된 브랜치 통합
 ```
 
 ### 왜 이 시스템을 사용하나요?
 
 - **적응형 탐색**: 문제 복잡도에 맞춰 1~3가지 방법 자동 조정
-- **하이브리드 모드**: 기본 N=2로 일상 작업도 빠르게
+- **하이브리드 모드**: 기본 N=2로 일상 작업도 효율적
+- **프로젝트 사전 분석**: Claude가 대규모 프로젝트를 탐색하는 시간 대폭 단축
 - **객관적 비교**: AI가 각 방법의 장단점을 리뷰, 테스트, 비교
 - **위험 감소**: 한 가지 방법에 올인하지 않고 대안 확보
 - **학습 효과**: 다양한 접근법을 보며 시야 확장
@@ -36,93 +41,100 @@
 
 ```bash
 # 의존성 설치
-pip install watchdog pyyaml aiohttp
+pip3 install -r requirements.txt
 
-# Claude Code CLI가 이미 설치되어 있어야 합니다
-# https://claude.ai/claude-code
+# 또는 패키지로 설치 (권장)
+pip3 install -e .
 ```
 
-### 2. 프로젝트 초기화
+**사전 요구사항**:
+- Python 3.8+
+- Git
+- **Claude Code CLI** (시스템 PATH에 `claude` 명령)
+
+### 2. 초기화
 
 ```bash
-cd /path/to/mine
-python -m orchestrator.main init
+# 설정 파일 생성
+python3 cli.py init
+
+# config.yaml 편집: project.target_repo 설정 필수!
 ```
 
-### 3. Orchestrator 시작 (백그라운드)
+### 3. 기획서 작성
 
-```bash
-python -m orchestrator.main watch --daemon
-```
+`planning-spec.md` 파일을 작성합니다. 기획서는 Claude Code와 대화하며 작성하거나, 직접 작성할 수 있습니다.
 
-### 4. 새 기획 시작
+**필수 요소**:
+- `## 구현 방법` 섹션
+- 탐색할 방법 개수 명시 (예: "탐색할 방법 개수: 2개")
+- 각 방법의 차별점 명확화
 
-```bash
-# 새 기획 생성
-python -m orchestrator.main plan create "user-authentication"
+**예시**:
+```markdown
+# 기획서: 관리자 로그인 시스템
 
-# workspace/planning/in-progress/user-authentication/ 폴더로 이동
-cd workspace/planning/in-progress/user-authentication
+## 요구사항
+- Spring Security 기반 ID/PW 인증
+- BCrypt 비밀번호 암호화
+- JWT 토큰 발급
 
-# Claude Code 시작
-claude
-```
+## 구현 방법
 
-### 5. Claude Code와 대화하며 기획서 작성
+탐색할 방법 개수: 1개
 
-```
-You: "사용자 인증 기능을 추가하고 싶어요. JWT와 세션 방식 중 어떤 게 좋을까요?"
-
-Claude: "두 방식을 모두 탐색해보시겠어요? 다음 3가지 방법을 제안합니다:
-1. JWT 토큰 기반
-2. 세션 기반
-3. OAuth2 + JWT 하이브리드
-..."
-
-You: "좋아요! 3개 방법으로 진행해주세요."
-
-Claude: "planning-spec.md를 작성했습니다. 확인해주세요."
-```
-
-### 6. 기획 완료
-
-```bash
-# 기획서가 완성되면 completed 폴더로 이동
-python -m orchestrator.main plan complete "user-authentication"
-
-# 또는 수동으로:
-mv planning-spec.md ../../completed/user-authentication-planning-spec.md
-```
-
-### 7. 자동 실행 및 알림 확인
-
-이제 AI 에이전트들이 자동으로:
-- ✅ 기획서 분석 (Architect)
-- ✅ 3가지 방법 구현 (Implementers)
-- ✅ 각 구현 리뷰 (Reviewer)
-- ✅ 각 구현 테스트 (Tester)
-- ✅ 모든 구현 비교 (Comparator)
-
-각 단계마다 알림이 콘솔에 표시됩니다:
-
-```
-✅ [SUCCESS] Phase 1 완료
-   아키텍처 분석 완료: 3개 구현 방향 도출
-
-✅ [SUCCESS] Phase 2 완료
-   모든 구현 완료: 3개
-
+### 방법 1: Spring Security + JWT
+- **핵심 아이디어**: SecurityFilterChain에서 JWT 검증
+- **기술 스택**: Spring Security, JJWT, BCrypt
 ...
 ```
 
-### 8. 결과 확인 및 선택
+### 4. 파이프라인 실행
 
 ```bash
-# 비교 보고서 확인
-cat workspace/tasks/task-20250210-153045/submit-final/comparison-report.md
+python3 cli.py run -s planning-spec.md -v
+```
 
-# 선택 및 통합
-python -m orchestrator.main approve task-20250210-153045 --select impl-1
+**자동 진행**:
+1. 기획서 검증
+2. Git clone/fetch (타겟 프로젝트)
+3. **프로젝트 분석** (~1-2초, Python 기반)
+   - 프로젝트 구조, 모듈, 기술 스택 분석
+   - `.project-profile.json` 캐싱
+   - 기획서 관련 모듈만 컨텍스트 생성
+4. Phase 1 (Architect) - 프로젝트 컨텍스트 제공으로 탐색 시간 단축
+5. **체크포인트** - 사용자 승인 대기
+6. Phase 2~6 자동 실행
+
+### 5. 체크포인트 승인
+
+다른 터미널에서:
+```bash
+# 전체 승인
+python3 cli.py approve <task-id>
+
+# N≥2: 특정 approach만 승인
+python3 cli.py approve <task-id> --approaches 1,2
+```
+
+### 6. 결과 확인 (N≥2)
+
+```bash
+# 비교 결과 확인
+python3 cli.py status <task-id>
+
+# 비교 보고서 읽기
+cat workspace/tasks/<task-id>/comparator/comparison.md
+
+# 구현 선택
+python3 cli.py select <task-id> <impl-id>
+```
+
+### 7. 통합
+
+```bash
+cd <타겟-프로젝트>
+git merge <task-id>/impl-<N>
 ```
 
 ---
@@ -130,181 +142,158 @@ python -m orchestrator.main approve task-20250210-153045 --select impl-1
 ## 📁 프로젝트 구조
 
 ```
-mine/
-├── README.md                    # 이 파일
-├── CLAUDE.md                    # Claude Code 설정 (자동 로드됨)
+multi-agent-dev-system/
+├── cli.py                         # CLI 진입점
+├── config.yaml                    # 설정 파일 (git ignore됨)
+├── requirements.txt               # Python 의존성
+├── setup.py                       # 패키지 설정
 │
-├── orchestrator/                # 시스템 코어 (구현 예정)
-│   ├── main.py
-│   ├── agents/
-│   ├── watcher.py
-│   ├── executor.py
-│   ├── notifier.py
-│   └── utils/
+├── orchestrator/                  # 핵심 오케스트레이터
+│   ├── main.py                    #   Orchestrator 클래스
+│   ├── executor.py                #   ClaudeExecutor (Claude Code 실행)
+│   ├── watcher.py                 #   파일 감시/대기
+│   ├── agents/                    #   AI 에이전트
+│   │   ├── architect.py           #     Phase 1: 구현 설계
+│   │   ├── implementer.py         #     Phase 2: 코드 구현
+│   │   ├── reviewer.py            #     Phase 3: 코드 리뷰
+│   │   ├── tester.py              #     Phase 3: 테스트
+│   │   └── comparator.py          #     Phase 4: 비교 분석
+│   └── utils/                     #   유틸리티
+│       ├── project_analyzer.py    #     🆕 프로젝트 사전 분석
+│       ├── git_manager.py         #     Git clone/worktree
+│       ├── notifier.py            #     시스템 알림
+│       ├── spec_parser.py         #     기획서 파싱
+│       └── spec_validator.py      #     기획서 검증
 │
-├── workspace/
-│   ├── planning/
-│   │   ├── in-progress/         # 📝 여기서 기획서 작성
-│   │   └── completed/           # ✅ 완성된 기획서 (자동 실행)
-│   │
-│   ├── tasks/                   # 실행 중/완료된 작업들
-│   │   └── task-20250210-153045/
-│   │       ├── planning-spec.md
-│   │       ├── approaches.json
-│   │       ├── implementations/
-│   │       │   ├── impl-1/      # JWT 구현
-│   │       │   ├── impl-2/      # 세션 구현
-│   │       │   └── impl-3/      # 하이브리드 구현
-│   │       ├── submit-stage-2/
-│   │       │   ├── impl-1-review.md
-│   │       │   ├── impl-1-test-results.md
-│   │       │   └── ...
-│   │       └── submit-final/
-│   │           └── comparison-report.md  # 📊 최종 비교 보고서
-│   │
-│   └── templates/
-│       └── planning-template.md  # 기획서 템플릿
-│
-├── prompts/                     # 에이전트 프롬프트
+├── prompts/                       # 에이전트 프롬프트 템플릿
+│   ├── architect.md
+│   ├── implementer.md
 │   ├── reviewer.md
 │   ├── tester.md
 │   └── comparator.md
 │
-└── config.yaml                  # 설정 파일 (생성 예정)
+└── workspace/                     # 런타임 워크스페이스
+    ├── tasks/                     #   실행 중/완료 태스크
+    │   └── task-YYYYMMDD-HHMMSS/  #     각 태스크 디렉토리
+    │       ├── planning-spec.md   #       기획서 복사본
+    │       ├── manifest.json      #       태스크 상태
+    │       ├── project-profile.json  #    🆕 프로젝트 분석 결과
+    │       └── implementations/   #       구현들 (git worktree)
+    │           ├── impl-1/
+    │           ├── impl-2/
+    │           └── impl-3/
+    └── .cache/                    #   Git clone 캐시
+        └── <project-name>/
+            ├── .git/
+            ├── .project-profile.json  # 🆕 프로젝트 프로필 캐시
+            └── (소스 파일들)
 ```
 
 ---
 
-## 🎨 작업 흐름 (워크플로우)
+## 🎨 파이프라인 흐름
 
-### Phase 0: 기획 단계 (사람 주도)
+### N=1 (단일 구현)
 
-**위치**: `workspace/planning/in-progress/[task-name]/`
-
-1. Claude Code와 대화
-2. 요구사항 명확화
-3. 구현 방법 N개 결정
-4. `planning-spec.md` 작성
-5. `completed/` 폴더로 이동
-
-**핵심**: "탐색할 방법 개수: 3개" 명시 필수!
-
----
-
-### Phase 1-6: 구현 단계 (AI 자동)
-
-#### Phase 1: Architecture Analysis
-- Architect Agent가 기획서 분석
-- N개 방법을 구체적 구현 계획으로 발전
-
-#### Phase 2: Implementation
-- N개 Implementer Agent가 병렬로 구현
-- 각각 독립된 환경에서 실행
-
-#### Phase 3: Review & Testing
-- Reviewer Agent: 코드 리뷰
-- Tester Agent: 테스트 작성 및 실행
-
-#### Phase 4: Comparison
-- Comparator Agent: 모든 결과 종합 비교
-- 시나리오별 추천 제시
-
-#### Phase 5: Human Approval
-- 비교 보고서 확인
-- 최적의 구현 선택
-
-#### Phase 6: Integration
-- Integrator Agent: 선택된 구현 통합
-- 미사용 구현 아카이브
-
----
-
-## 📋 CLI 명령어
-
-### 시스템 관리
-
-```bash
-# 초기화
-python -m orchestrator.main init
-
-# 기획 폴더 감시 시작
-python -m orchestrator.main watch
-
-# 백그라운드 실행
-python -m orchestrator.main watch --daemon
+```
+기획서 → 검증 → Git clone/fetch → 프로젝트 분석
+    → Phase 1: Architect
+    → [Checkpoint]
+    → Phase 2: Implementer (1개)
+    → Phase 3: Reviewer + Tester
+    → Phase 6: 통합 알림
 ```
 
-### 기획 관리
+### N≥2 (복수 구현)
 
-```bash
-# 새 기획 생성
-python -m orchestrator.main plan create "feature-name"
-
-# 기획 완료 (completed로 이동)
-python -m orchestrator.main plan complete "feature-name"
 ```
-
-### 작업 관리
-
-```bash
-# 작업 목록 보기
-python -m orchestrator.main list
-
-# 특정 작업 상태 확인
-python -m orchestrator.main status task-20250210-153045
-
-# 작업 승인 및 통합
-python -m orchestrator.main approve task-20250210-153045 --select impl-2
-
-# 작업 중단
-python -m orchestrator.main abort task-20250210-153045
-```
-
-### 로그 확인
-
-```bash
-# 알림 로그
-tail -f workspace/notifications.log
-
-# 작업 타임라인
-tail -f workspace/tasks/task-*/timeline.log
+기획서 → 검증 → Git clone/fetch → 프로젝트 분석
+    → Phase 1: Architect (N개 설계)
+    → [Checkpoint]
+    → Phase 2: Implementer x N (병렬)
+    → Phase 3: Reviewer + Tester x N (병렬)
+    → Phase 4: Comparator (비교 분석)
+    → Phase 5: Human Selection (선택)
+    → Phase 6: 통합 알림
 ```
 
 ---
 
-## ⚙️ 설정
+## 🆕 프로젝트 사전 분석 (ProjectAnalyzer)
 
-### config.yaml (예시)
+Git clone 후, Phase 1 전에 자동으로 실행되는 Python 기반 분석 엔진입니다.
+
+### 목적
+Claude가 대규모 프로젝트(수백~수천 파일)를 처음부터 탐색하는 시간을 대폭 단축합니다.
+
+### 동작 방식
+
+1. **프로젝트 타입 감지**: Gradle, Maven, npm, Python 등
+2. **모듈 구조 분석**: 각 모듈의 소스 루트, 주요 클래스 스캔
+3. **아키텍처 패턴 감지**: 헥사고날, 레이어드 등
+4. **프로필 캐싱**: `.project-profile.json` (commit SHA 기반)
+5. **타겟 컨텍스트 생성**: 기획서 키워드와 매칭되는 모듈만 추출
+
+### 2-tier 컨텍스트
+
+- **정적 프로필** (캐시됨): 프로젝트 전체 개요, 모듈 목록, 기술 스택
+- **동적 타겟 컨텍스트** (매번 생성): 기획서 관련 모듈의 실제 코드
+
+### 성능 개선
+
+| Phase | Before | After | 개선 |
+|-------|--------|-------|------|
+| Architect | ~252s | ~60-90s | **63~76% 단축** |
+| Implementer | ~300s+ | ~120-180s | **40~60% 단축** |
+
+**AI 비용 절감**: Python 분석은 무료, Claude는 필요한 부분만 탐색
+
+---
+
+## 📚 CLI 명령어
+
+| 명령어 | 설명 |
+|--------|------|
+| `init` | config.yaml 생성 |
+| `run -s <spec>` | 파이프라인 실행 |
+| `approve <task-id>` | 체크포인트 승인 |
+| `select <task-id> <impl-id>` | 구현 선택 (N≥2) |
+| `revise <task-id> -f "피드백"` | 수정 요청 |
+| `abort <task-id>` | 태스크 중단 |
+| `status [task-id]` | 상태 확인 |
+| `watch` | 감시 모드 |
+
+자세한 사용법은 [USAGE.md](USAGE.md)를 참고하세요.
+
+---
+
+## ⚙️ 설정 (config.yaml)
 
 ```yaml
-workspace: "./workspace"
-template_path: "./workspace/templates/base-env"
-timeout: 300
-max_retries: 2
+workspace:
+  root: ./workspace
 
-planning:
-  watch_enabled: true
-  in_progress_dir: "./workspace/planning/in-progress"
-  completed_dir: "./workspace/planning/completed"
+project:
+  target_repo: "https://github.com/your-org/your-project.git"  # 필수!
+  default_branch: "main"
+  github_token: ""  # private repo용
+
+execution:
+  timeout: 600      # Claude 실행 타임아웃 (초)
+  max_retries: 3
 
 pipeline:
-  num_approaches: 2            # 기본값 (하이브리드 모드)
-  adaptive_mode: true          # 적응형 파이프라인 활성화
-  complexity_threshold:
-    simple: 1                  # 단순 작업: N=1
-    medium: 2                  # 일반 작업: N=2 (기본값)
-    complex: 3                 # 복잡한 작업: N=3
+  checkpoint_phase1: true
+  num_approaches: 1  # 기본 구현 개수 (기획서에서 덮어쓸 수 있음)
+
+validation:
+  enabled: true
+  strict_mode: false
 
 notifications:
   enabled: true
-  on_failure: true
-  on_completion: true
-  log_file: "./workspace/notifications.log"
-  # webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+  sound: true
 ```
-
-**적응형 파이프라인**: `adaptive_mode: true`로 설정하면 시스템이 자동으로 복잡도를 판단하여 N을 조정합니다.
-**하이브리드 모드**: 기본값 N=2로 일상적인 작업에도 빠르게 적용 가능합니다.
 
 ---
 
@@ -314,79 +303,70 @@ notifications:
 
 **✅ DO**:
 - "탐색할 방법 개수: N개" 명확히 명시
-- 각 방법의 차별점을 명확히
+- 각 방법의 차별점을 명확히 (기술 스택, 아키텍처 등)
 - 성공 기준을 측정 가능하게
-- 제약사항을 구체적으로
+- 구체적인 모듈명/패키지명 언급 (프로젝트 분석에 도움)
 
 **❌ DON'T**:
 - "여러 방법이 있어요" (개수 불명확)
 - "좋은 성능" (측정 불가)
 - "적절한 기술" (구체성 부족)
+- "시스템의 인증" (모호, 모든 모듈 포함)
 
-### Phase 0에서 Claude Code 활용
+### N(구현 개수) 선택 가이드
 
-```
-# 좋은 질문 예시
-"JWT와 세션 방식의 장단점을 비교해주세요"
-"각 방법의 보안 고려사항은 무엇인가요?"
-"성능은 어떻게 다를까요?"
-
-# 나쁜 질문 예시
-"코드 작성해줘" (아직 기획 단계!)
-"어떤 게 좋아요?" (먼저 옵션을 탐색해야 함)
-```
-
-### 결과 해석하기
-
-비교 보고서를 읽을 때:
-1. **종합 점수**보다 **시나리오별 추천** 중요
-2. **절대적 우열**이 아닌 **상황별 적합성** 파악
-3. **트레이드오프** 이해하고 선택
+- **N=1**: 단순하고 명확한 작업
+- **N=2** (기본값, 권장): 일반적인 개발 작업, 대안 하나 확보
+- **N=3**: 중요한 아키텍처 결정, 여러 선택지 비교
 
 ---
 
 ## 🔧 고급 기능
 
-### 알림 연동
+### Git Worktree 격리
 
-Slack, Discord, Teams 등과 연동 가능:
+각 구현은 독립된 git worktree + 독립 브랜치에서 실행됩니다:
+- 모든 구현이 같은 원본 코드에서 시작
+- 구현 간 간섭 없음
+- 선택 후 `git merge <branch>`로 통합
 
-```yaml
-# config.yaml
-notifications:
-  webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK"
-```
+### 스마트 재시도
 
-### 커스텀 프롬프트
+`executor.py`는 다음 상황을 감지하여 무의미한 재시도를 방지합니다:
+- API rate limit 감지 → 즉시 중단
+- 연속 2회 timeout → 중단 (설정 검토 메시지 출력)
 
-각 에이전트의 프롬프트를 수정하여 동작 커스터마이징:
+### 시스템 알림
 
-```yaml
-# config.yaml
-agents:
-  reviewer:
-    prompt_path: "./prompts/custom-reviewer.md"
-```
-
-### 환경 템플릿
-
-프로젝트별 base 환경 설정:
-
-```
-workspace/templates/base-env/
-├── package.json
-├── tsconfig.json
-├── .env.example
-└── src/
-```
+macOS/Linux/Windows 네이티브 알림 지원:
+- Phase 시작/완료
+- 체크포인트 대기
+- 오류 발생
 
 ---
 
-## 📚 문서
+## 📖 문서
 
-- [CLAUDE.md](CLAUDE.md) - Claude Code 설정 및 가이드라인
-- [multi-agent-dev-system-proposal.md](multi-agent-dev-system-proposal.md) - 기술 제안서
-- [planning-template.md](workspace/templates/planning-template.md) - 기획서 템플릿
+- **[USAGE.md](USAGE.md)** - 상세 사용 가이드 (필독!)
+- **[CLAUDE.md](CLAUDE.md)** - Claude Code 설정 및 가이드라인
+- **[multi-agent-dev-system-implementation-guide.md](multi-agent-dev-system-implementation-guide.md)** - 구현 가이드
+- **[multi-agent-dev-system-proposal.md](multi-agent-dev-system-proposal.md)** - 기술 제안서
+
+---
+
+## 🙋 FAQ
+
+### Q: 왜 여러 구현을 만들어야 하나요?
+A: 하나의 "정답"은 없습니다. 각 방법은 트레이드오프가 있고, 여러 옵션을 비교해보면 더 나은 결정을 내릴 수 있습니다.
+
+### Q: 비용이 많이 들지 않나요?
+A: Claude API 비용은 발생하지만, 프로젝트 사전 분석으로 실행 시간을 40~60% 단축했습니다. 잘못된 선택으로 인한 리팩토링 비용보다 저렴합니다.
+
+### Q: 프로젝트 사전 분석은 어떻게 동작하나요?
+A: Python으로 build 파일(build.gradle, pom.xml, package.json 등)을 파싱하고, 소스 디렉토리를 스캔하여 주요 클래스를 추출합니다. AI를 사용하지 않으므로 비용이 들지 않고 1-2초 내에 완료됩니다.
+
+### Q: Claude Code 없이 사용 가능한가요?
+A: 아니요. 이 시스템은 Claude Code CLI를 기반으로 설계되었습니다.
 
 ---
 
@@ -401,60 +381,5 @@ workspace/templates/base-env/
 MIT License
 
 ---
-
-## 🙋 FAQ
-
-### Q: 왜 여러 구현을 만들어야 하나요?
-
-A: 하나의 "정답"은 없습니다. 각 방법은 트레이드오프가 있고, 상황에 따라 최선이 다릅니다. 여러 옵션을 비교해보면 더 나은 결정을 내릴 수 있습니다.
-
-### Q: 비용이 많이 들지 않나요?
-
-A: Claude Code API 비용은 발생합니다. 하지만:
-- 중요한 결정일수록 여러 옵션 탐색의 가치가 큼
-- 잘못된 선택으로 인한 리팩토링 비용보다 저렴
-- 학습 효과까지 고려하면 투자 가치 충분
-
-### Q: 모든 프로젝트에 사용하나요?
-
-A: 아니요. 다음 경우에 적합합니다:
-- ✅ 중요한 아키텍처 결정
-- ✅ 여러 방법이 존재하는 문제
-- ✅ 올바른 선택이 중요한 경우
-
-단순한 기능은 직접 구현하는 게 빠릅니다.
-
-### Q: Claude Code 없이 사용 가능한가요?
-
-A: 아니요. 이 시스템은 Claude Code CLI를 기반으로 설계되었습니다.
-
-### Q: 몇 개 방법을 탐색하는 게 좋나요?
-
-A: **적응형 파이프라인**이 자동으로 조정합니다 (권장):
-- **N=1**: 단순하고 명확한 작업
-- **N=2** (기본값): 일반적인 개발 작업
-- **N=3+**: 중요한 아키텍처 결정
-
-수동으로 지정하려면:
-- 2개: 빠르면서도 대안 확보
-- 3개: 다양한 비교 (중요 결정)
-- 4-5개: 깊은 탐색 (시간 증가)
-
----
-
-## 🎉 시작하기
-
-```bash
-# 1. 설치
-pip install watchdog pyyaml aiohttp
-
-# 2. 초기화
-python -m orchestrator.main init
-
-# 3. 첫 기획 시작!
-python -m orchestrator.main plan create "my-first-feature"
-cd workspace/planning/in-progress/my-first-feature
-claude
-```
 
 **Happy Multi-Agent Development! 🚀**
