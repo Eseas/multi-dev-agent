@@ -28,13 +28,14 @@ class ValidationResult:
     warnings: List[str] = field(default_factory=list)
 
 
-def validate_spec(spec_path: Path) -> ValidationResult:
+def validate_spec(spec_path: Path, strict_mode: bool = False) -> ValidationResult:
     """기획서를 검증한다.
 
     3단계 검증: 구조 → 내용 → 일관성
 
     Args:
         spec_path: planning-spec.md 파일 경로
+        strict_mode: True면 경고(warnings)도 오류(errors)로 처리
 
     Returns:
         ValidationResult
@@ -132,6 +133,11 @@ def validate_spec(spec_path: Path) -> ValidationResult:
                     "각 방법은 서로 다른 접근법이어야 합니다."
                 )
             seen.add(name)
+
+    # strict_mode: 경고를 오류로 전환
+    if strict_mode and warnings:
+        errors.extend(warnings)
+        warnings = []
 
     valid = len(errors) == 0
     return ValidationResult(valid=valid, errors=errors, warnings=warnings)

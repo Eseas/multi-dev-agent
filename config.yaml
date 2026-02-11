@@ -18,6 +18,8 @@ pipeline:
 
 validation:
   enabled: true                # 기획서 유효성 검증 활성화
+  auto_revalidate: true        # 기획서 수정 시 자동 재검증
+  strict_mode: false           # true면 경고도 실패로 처리
 
 notifications:
   enabled: true

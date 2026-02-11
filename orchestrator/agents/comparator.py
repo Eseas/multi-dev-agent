@@ -90,7 +90,14 @@ class ComparatorAgent(BaseAgent):
         return result
 
     def _gather_comparison_data(self, implementations: List[Dict]) -> List[Dict]:
-        """Gather all comparison data for each implementation."""
+        """Gather all comparison data for each implementation.
+
+        리뷰/테스트 결과 탐색 우선순위:
+          1. review_workspace / test_workspace (task_dir/review-N/, test-N/)
+          2. worktree 내부 fallback (impl['path']/review.md 등)
+        """
+        import json
+
         data = []
 
         for impl in implementations:
@@ -100,23 +107,65 @@ class ComparatorAgent(BaseAgent):
                 'approach': impl.get('approach', {}),
             }
 
-            # Try to read review
-            review_path = Path(impl['path']) / 'review.md'
-            if review_path.exists():
-                impl_data['review'] = review_path.read_text()
+            # 리뷰 결과 탐색
+            review_workspace = impl.get('review_workspace', '')
+            review_content = self._find_review(review_workspace, impl.get('path', ''))
+            if review_content:
+                impl_data['review'] = review_content
 
-            # Try to read test results
-            test_results_path = Path(impl['path']) / 'test_results.json'
-            if test_results_path.exists():
-                try:
-                    import json
-                    impl_data['test_results'] = json.loads(test_results_path.read_text())
-                except json.JSONDecodeError:
-                    pass
+            # 테스트 결과 탐색
+            test_workspace = impl.get('test_workspace', '')
+            test_results = self._find_test_results(test_workspace, impl.get('path', ''))
+            if test_results is not None:
+                impl_data['test_results'] = test_results
 
             data.append(impl_data)
 
         return data
+
+    def _find_review(self, review_workspace: str, impl_path: str) -> str:
+        """리뷰 결과를 탐색한다."""
+        # 1순위: review_workspace 내 review.md
+        if review_workspace:
+            ws = Path(review_workspace)
+            for name in ('review.md', 'code-review.md'):
+                candidate = ws / name
+                if candidate.exists():
+                    return candidate.read_text()
+
+        # 2순위: worktree 내부 fallback
+        if impl_path:
+            fallback = Path(impl_path) / 'review.md'
+            if fallback.exists():
+                return fallback.read_text()
+
+        return ''
+
+    def _find_test_results(self, test_workspace: str, impl_path: str):
+        """테스트 결과를 탐색한다."""
+        import json
+
+        # 1순위: test_workspace 내 test_results.json
+        if test_workspace:
+            ws = Path(test_workspace)
+            for name in ('test_results.json', 'test-results.json'):
+                candidate = ws / name
+                if candidate.exists():
+                    try:
+                        return json.loads(candidate.read_text())
+                    except json.JSONDecodeError:
+                        pass
+
+        # 2순위: worktree 내부 fallback
+        if impl_path:
+            fallback = Path(impl_path) / 'test_results.json'
+            if fallback.exists():
+                try:
+                    return json.loads(fallback.read_text())
+                except json.JSONDecodeError:
+                    pass
+
+        return None
 
     def _format_comparison_data(self, data: List[Dict]) -> str:
         """Format comparison data for the prompt."""

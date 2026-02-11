@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Command-line interface for the multi-agent development system.
 
-v3: spec 기반 실행, approve/revise/abort 체크포인트, watch 모드.
+v4: select 커맨드, 개별 승인(--approaches/--reject), 확장 status, auto_revalidate.
 """
 
 import argparse
@@ -40,6 +40,13 @@ Examples:
   # 태스크 상태 확인
   multi-agent-dev status
   multi-agent-dev status task-20250210-153000
+
+  # Phase 5에서 구현 선택 (N≥2)
+  multi-agent-dev select task-20250210-153000 2
+
+  # 특정 approach만 승인 (N≥2)
+  multi-agent-dev approve task-20250210-153000 --approaches 1,2
+  multi-agent-dev approve task-20250210-153000 --reject 3
 
   # 기획서 감시 모드
   multi-agent-dev watch
@@ -89,6 +96,35 @@ Examples:
         'task_id', type=str, help='태스크 ID (예: task-20250210-153000)'
     )
     approve_parser.add_argument(
+        '-c', '--config',
+        type=Path,
+        default=Path('config.yaml'),
+        help='설정 파일 경로'
+    )
+    approve_parser.add_argument(
+        '--approaches',
+        type=str,
+        default=None,
+        help='승인할 approach ID 목록 (쉼표 구분, 예: 1,2)'
+    )
+    approve_parser.add_argument(
+        '--reject',
+        type=str,
+        default=None,
+        help='반려할 approach ID 목록 (쉼표 구분, 예: 3)'
+    )
+
+    # select (Phase 5: 구현 선택)
+    select_parser = subparsers.add_parser(
+        'select', help='구현 선택 (Phase 5, N≥2)'
+    )
+    select_parser.add_argument(
+        'task_id', type=str, help='태스크 ID'
+    )
+    select_parser.add_argument(
+        'impl_id', type=int, help='선택할 구현 ID (예: 2)'
+    )
+    select_parser.add_argument(
         '-c', '--config',
         type=Path,
         default=Path('config.yaml'),
@@ -165,6 +201,7 @@ Examples:
         'init': cmd_init,
         'run': cmd_run,
         'approve': cmd_approve,
+        'select': cmd_select,
         'revise': cmd_revise,
         'abort': cmd_abort,
         'status': cmd_status,
@@ -299,11 +336,55 @@ def cmd_approve(args):
         'task_id': args.task_id,
     }
 
+    # N≥2 개별 승인
+    if args.approaches:
+        try:
+            approved = [int(x.strip()) for x in args.approaches.split(',')]
+            decision['approved_approaches'] = approved
+        except ValueError:
+            print('오류: --approaches는 쉼표로 구분된 숫자여야 합니다 (예: 1,2)', file=sys.stderr)
+            return 1
+
+    if args.reject:
+        try:
+            rejected = [int(x.strip()) for x in args.reject.split(',')]
+            decision['rejected_approaches'] = rejected
+        except ValueError:
+            print('오류: --reject는 쉼표로 구분된 숫자여야 합니다 (예: 3)', file=sys.stderr)
+            return 1
+
     if _write_checkpoint_decision(task_dir, decision):
-        print(f'[APPROVED] {args.task_id} 승인 완료')
+        msg = f'[APPROVED] {args.task_id} 승인 완료'
+        if 'approved_approaches' in decision:
+            msg += f' (승인: {decision["approved_approaches"]})'
+        if 'rejected_approaches' in decision:
+            msg += f' (반려: {decision["rejected_approaches"]})'
+        print(msg)
         print('파이프라인이 다음 단계로 진행됩니다.')
         return 0
     return 1
+
+
+def cmd_select(args):
+    """Phase 5에서 구현을 선택한다 (N≥2)."""
+    task_dir = _get_task_dir(args, args.task_id)
+
+    if not task_dir.exists():
+        print(f'오류: 태스크 디렉토리가 없습니다: {task_dir}', file=sys.stderr)
+        return 1
+
+    decision = {
+        'selected_id': args.impl_id,
+        'action': 'approve',
+        'task_id': args.task_id,
+    }
+
+    decision_file = task_dir / 'selection-decision.json'
+    atomic_write(decision_file, decision)
+
+    print(f'[SELECTED] {args.task_id}: impl-{args.impl_id} 선택 완료')
+    print('파이프라인이 Phase 6 (통합)으로 진행됩니다.')
+    return 0
 
 
 def cmd_revise(args):
@@ -394,6 +475,39 @@ def cmd_status(args):
                 status = phase_data.get('status', 'unknown')
                 print(f'  {phase_name}: {status}')
 
+        # 구현 상세 (N≥2)
+        phase2 = phases.get('phase2', {})
+        impl_list = phase2.get('implementations', [])
+        if impl_list:
+            print()
+            print('구현 목록:')
+            for impl_info in impl_list:
+                aid = impl_info.get('approach_id', '?')
+                branch = impl_info.get('branch', 'N/A')
+                success = impl_info.get('success', False)
+                status_icon = 'OK' if success else 'FAIL'
+                print(f'  impl-{aid}: [{status_icon}] {branch}')
+
+        # comparison/rankings 확인 (Phase 4)
+        phase4 = phases.get('phase4', {})
+        if phase4.get('rankings'):
+            print()
+            print(f'Rankings: {phase4["rankings"]}')
+            comparison_file = task_dir / 'comparator' / 'comparison.md'
+            if comparison_file.exists():
+                print(f'비교 보고서: {comparison_file}')
+
+        # human-review 확인 (Phase 5)
+        review_file = task_dir / 'human-review.json'
+        if review_file.exists():
+            with open(review_file) as f:
+                review = json.load(f)
+            recommended = review.get('recommended')
+            if recommended:
+                print()
+                print(f'추천 구현: impl-{recommended}')
+                print(f'선택하려면: multi-agent-dev select {args.task_id} <impl-id>')
+
         # integration-info 확인
         integration_file = task_dir / 'integration-info.json'
         if integration_file.exists():
@@ -443,6 +557,7 @@ def cmd_watch(args):
 
     workspace/planning/completed/ 디렉토리를 감시하여
     새로운 기획서가 감지되면 자동으로 파이프라인을 실행한다.
+    auto_revalidate가 true면 기존 기획서의 수정도 감지하여 재실행한다.
     """
     if not args.config.exists():
         print(f'오류: 설정 파일을 찾을 수 없습니다: {args.config}', file=sys.stderr)
@@ -456,41 +571,62 @@ def cmd_watch(args):
     completed_dir = workspace_root / 'planning' / 'completed'
     completed_dir.mkdir(parents=True, exist_ok=True)
 
+    auto_revalidate = config.get('validation', {}).get('auto_revalidate', False)
+
     print(f'기획서 감시 중: {completed_dir}')
     print('새로운 planning-spec.md 파일을 감지하면 자동으로 실행합니다.')
+    if auto_revalidate:
+        print('auto_revalidate 활성화: 기존 기획서 수정 시 재실행합니다.')
     print('Ctrl+C로 종료')
     print()
 
     processed = set()
+    # mtime 추적 (auto_revalidate용)
+    file_mtimes = {}
 
-    # 기존 파일 스킵
+    # 기존 파일 등록
     for existing in completed_dir.rglob('planning-spec.md'):
-        processed.add(str(existing))
+        spec_str = str(existing)
+        processed.add(spec_str)
+        file_mtimes[spec_str] = existing.stat().st_mtime
 
     try:
         while True:
             for spec_file in completed_dir.rglob('planning-spec.md'):
                 spec_str = str(spec_file)
-                if spec_str in processed:
-                    continue
 
-                processed.add(spec_str)
-                print(f'새 기획서 감지: {spec_file}')
-                print('파이프라인을 시작합니다...')
-                print()
+                should_run = False
 
-                try:
-                    orchestrator = Orchestrator(args.config)
-                    result = orchestrator.run_from_spec(spec_file)
+                if spec_str not in processed:
+                    # 새 파일
+                    processed.add(spec_str)
+                    file_mtimes[spec_str] = spec_file.stat().st_mtime
+                    should_run = True
+                    print(f'새 기획서 감지: {spec_file}')
+                elif auto_revalidate:
+                    # 기존 파일 수정 감지
+                    current_mtime = spec_file.stat().st_mtime
+                    if current_mtime > file_mtimes.get(spec_str, 0):
+                        file_mtimes[spec_str] = current_mtime
+                        should_run = True
+                        print(f'기획서 수정 감지: {spec_file}')
 
-                    if result['success']:
-                        print(f'[SUCCESS] 완료: {result["task_id"]}')
-                    else:
-                        print(f'[FAILED] 실패: {result.get("error")}')
-                except Exception as e:
-                    print(f'[ERROR] 오류: {e}', file=sys.stderr)
+                if should_run:
+                    print('파이프라인을 시작합니다...')
+                    print()
 
-                print()
+                    try:
+                        orchestrator = Orchestrator(args.config)
+                        result = orchestrator.run_from_spec(spec_file)
+
+                        if result['success']:
+                            print(f'[SUCCESS] 완료: {result["task_id"]}')
+                        else:
+                            print(f'[FAILED] 실패: {result.get("error")}')
+                    except Exception as e:
+                        print(f'[ERROR] 오류: {e}', file=sys.stderr)
+
+                    print()
 
             time.sleep(5)  # 5초마다 폴링
 
