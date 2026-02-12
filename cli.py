@@ -269,12 +269,43 @@ def cmd_run(args):
 
         if result['success']:
             task_id = result['task_id']
-            branch = result.get('selected_branch', 'N/A')
-            print(f'[SUCCESS] 파이프라인 완료!')
-            print(f'  태스크 ID: {task_id}')
-            print(f'  브랜치:    {branch}')
-            print()
-            print(f'통합하려면: git merge {branch}')
+
+            # 평가 요약에서 브랜치 정보 추출
+            eval_summary = result.get('evaluation_summary', {})
+            implementations = result.get('implementations', [])
+
+            # 브랜치 목록 생성
+            if eval_summary.get('status') == 'single_implementation':
+                # N=1: 단일 구현
+                branch = eval_summary.get('branch', 'N/A')
+                print(f'[SUCCESS] 파이프라인 완료!')
+                print(f'  태스크 ID: {task_id}')
+                print(f'  브랜치:    {branch}')
+                print()
+                print(f'평가 결과: workspace/tasks/{task_id}/evaluation-result.md')
+                print(f'통합하려면: cd <타겟-프로젝트> && git merge {branch}')
+            elif eval_summary.get('rankings'):
+                # N≥2: 비교 평가
+                rankings = eval_summary['rankings']
+                recommended_id = rankings[0] if rankings else None
+                branches = [impl['branch'] for impl in implementations if impl.get('success')]
+
+                print(f'[SUCCESS] 파이프라인 완료!')
+                print(f'  태스크 ID: {task_id}')
+                print(f'  구현 개수: {len(branches)}개')
+                if recommended_id:
+                    recommended_branch = next((impl['branch'] for impl in implementations if impl['approach_id'] == recommended_id), None)
+                    print(f'  추천 구현: impl-{recommended_id} ({recommended_branch})')
+                print()
+                print(f'평가 결과: workspace/tasks/{task_id}/evaluation-result.md')
+                print(f'비교 보고서: workspace/tasks/{task_id}/comparator/comparison.md')
+            else:
+                # 평가 실패 또는 기타
+                print(f'[SUCCESS] 파이프라인 완료 (평가 없음)')
+                print(f'  태스크 ID: {task_id}')
+                print()
+                print(f'결과 확인: workspace/tasks/{task_id}/')
+
             return 0
         else:
             print(f'[FAILED] 파이프라인 실패', file=sys.stderr)

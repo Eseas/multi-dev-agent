@@ -352,16 +352,17 @@ class Orchestrator:
             self.notifier.notify_stage_completed("Phase 2: Implementation")
 
             # === Phase 3: Review & Test (병렬) ===
+            self.logger.info("Phase 3: Review & Test 시작")
+            self.notifier.notify_stage_started("Phase 3: Review & Test")
+
             self._log_timeline(timeline_file, "PHASE", "review_test_start")
             self._update_manifest(
                 manifest_file, manifest, 'phase3_review_test'
             )
-            self.notifier.notify_stage_started("Phase 3: Review & Test")
-
             self._run_reviewers_and_testers_parallel(impl_results, task_dir)
-
             manifest['phases']['phase3'] = {'status': 'completed'}
             self._log_timeline(timeline_file, "PHASE", "review_test_done")
+
             self.notifier.notify_stage_completed("Phase 3: Review & Test")
 
             # 성공한 구현 필터링
@@ -575,7 +576,10 @@ class Orchestrator:
             approach_id, review_workspace,
             self.executor, reviewer_prompt
         )
-        review_result = reviewer.run({'impl_path': impl_path})
+        review_result = reviewer.run({
+            'impl_path': impl_path,
+            'approach': impl.get('approach', {})  # approach 정보 전달
+        })
         impl['review_success'] = review_result['success']
         impl['review_workspace'] = str(review_workspace)
 
@@ -584,7 +588,10 @@ class Orchestrator:
             approach_id, test_workspace,
             self.executor, tester_prompt
         )
-        test_result = tester.run({'impl_path': impl_path})
+        test_result = tester.run({
+            'impl_path': impl_path,
+            'approach': impl.get('approach', {})  # approach 정보 전달
+        })
         impl['test_success'] = test_result['success']
         impl['test_workspace'] = str(test_workspace)
 

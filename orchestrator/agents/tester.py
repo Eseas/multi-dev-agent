@@ -41,12 +41,13 @@ class TesterAgent(BaseAgent):
         Write and execute tests for the implementation.
 
         Args:
-            context: Must contain 'impl_path'
+            context: Must contain 'impl_path' and 'approach'
 
         Returns:
             Dict with test results
         """
         impl_path = context.get('impl_path')
+        approach = context.get('approach', {})
 
         if not impl_path or not Path(impl_path).exists():
             return {
@@ -57,10 +58,11 @@ class TesterAgent(BaseAgent):
         logger.info(f"Tester {self.approach_id} starting test generation")
 
         # Load and format prompt
+        approach_name = approach.get('name', 'Unknown')
         prompt = self.load_prompt(
             self.prompt_file,
-            impl_path=impl_path,
-            approach_id=self.approach_id
+            impl_dir=impl_path,  # tester.md uses {impl_dir}
+            approach_name=approach_name  # tester.md uses {approach_name}
         )
 
         # Execute test writing and running

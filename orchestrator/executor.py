@@ -206,8 +206,36 @@ class ClaudeExecutor:
         Returns:
             Dict with success, output, and error
         """
-        # Build command
-        cmd = ['claude', '-p', prompt]
+        # Create .claude/settings in working_dir to enable auto-approval
+        # Create both settings.json and settings.local.json since local has higher priority
+        claude_dir = working_dir / '.claude'
+        claude_dir.mkdir(exist_ok=True)
+
+        settings = {
+            "permissionMode": "dontAsk",
+            "permissions": {
+                "allow": [
+                    "Bash(*)",
+                    "Write(*)",
+                    "Edit(*)",
+                    "Read(*)",
+                    "Glob(*)",
+                    "Grep(*)"
+                ]
+            }
+        }
+
+        # Write both settings.json and settings.local.json
+        # settings.local.json has higher priority, so it's critical
+        settings_json = claude_dir / 'settings.json'
+        settings_local = claude_dir / 'settings.local.json'
+
+        settings_content = json.dumps(settings, indent=2)
+        settings_json.write_text(settings_content, encoding='utf-8')
+        settings_local.write_text(settings_content, encoding='utf-8')
+
+        # Build command with permission mode to avoid approval prompts
+        cmd = ['claude', '-p', prompt, '--permission-mode=dontAsk']
 
         # Prepare environment
         env = None

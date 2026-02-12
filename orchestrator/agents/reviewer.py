@@ -41,12 +41,13 @@ class ReviewerAgent(BaseAgent):
         Review the implementation.
 
         Args:
-            context: Must contain 'impl_path' to review
+            context: Must contain 'impl_path' and 'approach' to review
 
         Returns:
             Dict with review results
         """
         impl_path = context.get('impl_path')
+        approach = context.get('approach', {})
 
         if not impl_path or not Path(impl_path).exists():
             return {
@@ -57,10 +58,11 @@ class ReviewerAgent(BaseAgent):
         logger.info(f"Reviewer {self.approach_id} starting code review")
 
         # Load and format prompt
+        approach_name = approach.get('name', 'Unknown')
         prompt = self.load_prompt(
             self.prompt_file,
-            impl_path=impl_path,
-            approach_id=self.approach_id
+            impl_dir=impl_path,  # reviewer.md uses {impl_dir}
+            approach_name=approach_name  # reviewer.md uses {approach_name}
         )
 
         # Execute review
