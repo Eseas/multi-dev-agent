@@ -1,6 +1,11 @@
 """Main orchestrator for managing the multi-agent development pipeline.
 
-v4: N≥2 지원, 병렬 실행, Phase 4/5 추가, 개별 승인.
+v5: Phase 5/6 제거, 평가까지만 실행 후 종료.
+- Phase 1: Architect (접근법 설계)
+- Phase 2: Implementer (병렬 구현)
+- Phase 3: Reviewer + Tester (병렬 리뷰/테스트)
+- Phase 4: Comparator (N≥2일 때만, 평가/비교)
+- 평가 결과 저장 후 종료 (merge는 사용자가 수동으로)
 """
 
 import logging
@@ -42,12 +47,14 @@ class Orchestrator:
     다중 에이전트 개발 파이프라인 오케스트레이터.
 
     파이프라인 (N=1):
-      Validation → Phase 1 → [Checkpoint] → Phase 2 → Phase 3 → Phase 6
+      Validation → Phase 1 → [Checkpoint] → Phase 2 → Phase 3 → 평가 결과 저장
 
     파이프라인 (N≥2):
       Validation → Phase 1 → [Checkpoint] → Phase 2 (병렬)
-      → Phase 3 (병렬) → Phase 4 (Comparator) → Phase 5 (Selection)
-      → Phase 6 (통합 알림)
+      → Phase 3 (병렬) → Phase 4 (Comparator) → 평가 결과 저장
+
+    최종 결과: evaluation-result.md에 평가 결과 저장 후 종료
+    사용자가 수동으로 원하는 브랜치를 선택하여 머지
     """
 
     def __init__(self, config_path: Path):
@@ -370,48 +377,40 @@ class Orchestrator:
                     'error': '모든 구현이 실패했습니다'
                 }
 
-            # === N 분기: N=1이면 바로 Phase 6, N≥2면 Phase 4/5 ===
+            # === Phase 4: 평가 (N≥2) 또는 요약 (N=1) ===
+            evaluation_summary = None
             if len(successful_impls) >= 2:
-                # Phase 4: Comparator
-                selected = self._run_phase4_and_phase5(
+                # Phase 4: Comparator 실행
+                evaluation_summary = self._run_phase4_comparison(
                     task_id, task_dir, timeline_file,
                     manifest_file, manifest, successful_impls
                 )
-                if selected is None:
-                    return {
-                        'success': False,
-                        'task_id': task_id,
-                        'error': '선택 실패 또는 중단'
-                    }
             else:
-                # N=1 또는 성공 1개: 바로 선택
-                selected = successful_impls[0]
+                # N=1: 평가 없이 단일 구현 요약
+                evaluation_summary = self._generate_single_impl_summary(
+                    successful_impls[0]
+                )
 
-            # === Phase 6: 통합 알림 (사용자 주도) ===
-            self._log_timeline(timeline_file, "PHASE", "integration_notify")
-            self._update_manifest(
-                manifest_file, manifest, 'phase6_integration'
-            )
-
-            self._notify_integration_ready(
-                task_id=task_id,
-                task_dir=task_dir,
-                branch=selected['branch'],
-                worktree_path=selected['worktree_path']
+            # === 최종 평가 결과 저장 ===
+            self._save_final_evaluation(
+                task_dir, evaluation_summary, successful_impls
             )
 
             # 완료
             self._update_manifest(manifest_file, manifest, 'completed')
             self._log_timeline(timeline_file, "PHASE", "pipeline_completed")
-            self.notifier.notify_pipeline_completed(task_id)
+            self.notifier.notify_pipeline_completed(
+                f"{task_id} - 평가 완료. evaluation-result.md를 확인하세요."
+            )
 
             self.logger.info(f"파이프라인 완료: {task_id}")
+            self.logger.info(f"평가 결과: {task_dir / 'evaluation-result.md'}")
 
             return {
                 'success': True,
                 'task_id': task_id,
                 'implementations': impl_results,
-                'selected_branch': selected['branch']
+                'evaluation_summary': evaluation_summary
             }
 
         except Exception as e:
@@ -589,9 +588,9 @@ class Orchestrator:
         impl['test_success'] = test_result['success']
         impl['test_workspace'] = str(test_workspace)
 
-    # ── Phase 4/5: 비교 + 선택 (N≥2) ────────────────────────
+    # ── Phase 4: 비교 (N≥2) ────────────────────────────────
 
-    def _run_phase4_and_phase5(
+    def _run_phase4_comparison(
         self,
         task_id: str,
         task_dir: Path,
@@ -599,11 +598,11 @@ class Orchestrator:
         manifest_file: Path,
         manifest: Dict,
         successful_impls: List[Dict]
-    ) -> Optional[Dict]:
-        """Phase 4 (Comparator) + Phase 5 (Human Selection)를 실행한다.
+    ) -> Dict[str, Any]:
+        """Phase 4 (Comparator)를 실행한다.
 
         Returns:
-            선택된 impl 딕셔너리 또는 None
+            평가 요약 딕셔너리
         """
         # === Phase 4: Comparison ===
         self._log_timeline(timeline_file, "PHASE", "comparison_start")
@@ -639,11 +638,15 @@ class Orchestrator:
             self.logger.error(
                 f"Comparator 실패: {comp_result.get('error')}"
             )
-            # Comparator 실패 시 첫 번째 성공 impl로 fallback
+            # Comparator 실패 시 기본 평가 반환
             self.notifier.notify_stage_completed(
-                "Phase 4: Comparison (실패, 기본 선택)"
+                "Phase 4: Comparison (실패)"
             )
-            return successful_impls[0]
+            return {
+                'status': 'failed',
+                'error': comp_result.get('error'),
+                'rankings': []
+            }
 
         rankings = comp_result['rankings']
         manifest['phases']['phase4'] = {
@@ -657,36 +660,133 @@ class Orchestrator:
         )
         self.notifier.notify_stage_completed("Phase 4: Comparison")
 
-        # === Phase 5: Human Selection ===
-        self._log_timeline(timeline_file, "PHASE", "selection_start")
-        self._update_manifest(manifest_file, manifest, 'phase5_selection')
-        self.notifier.notify_stage_started("Phase 5: Human Selection")
-
-        selected = self._wait_for_selection(
-            task_dir, rankings, successful_impls
-        )
-
-        if selected is None:
-            self._log_timeline(timeline_file, "PHASE", "selection_timeout")
-            self._update_manifest(manifest_file, manifest, 'failed')
-            self.notifier.notify_pipeline_failed(
-                "선택 타임아웃. select 명령을 실행하세요."
-            )
-            return None
-
-        manifest['phases']['phase5'] = {
+        return {
             'status': 'completed',
-            'selected_id': selected['approach_id']
+            'rankings': rankings,
+            'comparison_file': str(comparator_workspace / 'comparison.md')
         }
-        self._log_timeline(
-            timeline_file, "PHASE",
-            f"selection_done (selected={selected['approach_id']})"
-        )
-        self.notifier.notify_stage_completed(
-            f"Phase 5: impl-{selected['approach_id']} 선택됨"
-        )
 
-        return selected
+    def _generate_single_impl_summary(
+        self,
+        impl: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """N=1일 때 단일 구현 요약을 생성한다."""
+        return {
+            'status': 'single_implementation',
+            'approach_id': impl['approach_id'],
+            'approach_name': impl['approach'].get('name', ''),
+            'branch': impl['branch'],
+            'worktree_path': impl['worktree_path'],
+            'review_success': impl.get('review_success'),
+            'test_success': impl.get('test_success')
+        }
+
+    def _save_final_evaluation(
+        self,
+        task_dir: Path,
+        evaluation_summary: Dict[str, Any],
+        implementations: List[Dict]
+    ) -> None:
+        """최종 평가 결과를 파일로 저장한다."""
+        result_file = task_dir / 'evaluation-result.md'
+
+        # Markdown 형식으로 작성
+        lines = [
+            "# 평가 결과",
+            "",
+            f"**작업 ID**: {task_dir.name}",
+            f"**생성 시각**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "---",
+            ""
+        ]
+
+        if evaluation_summary.get('status') == 'single_implementation':
+            # N=1: 단일 구현
+            lines.extend([
+                "## 단일 구현",
+                "",
+                f"**접근법 ID**: {evaluation_summary['approach_id']}",
+                f"**접근법 이름**: {evaluation_summary['approach_name']}",
+                f"**브랜치**: `{evaluation_summary['branch']}`",
+                f"**리뷰 통과**: {'✅' if evaluation_summary.get('review_success') else '❌'}",
+                f"**테스트 통과**: {'✅' if evaluation_summary.get('test_success') else '❌'}",
+                "",
+                "### 구현 위치",
+                f"```",
+                f"{evaluation_summary['worktree_path']}",
+                f"```",
+                ""
+            ])
+        elif evaluation_summary.get('rankings'):
+            # N≥2: 비교 평가
+            rankings = evaluation_summary['rankings']
+            lines.extend([
+                "## 비교 평가 결과",
+                "",
+                f"**평가 순위**: {rankings}",
+                f"**추천 구현**: impl-{rankings[0]}",
+                "",
+                "### 상세 비교",
+                ""
+            ])
+
+            # 각 구현 정보
+            for impl in implementations:
+                aid = impl['approach_id']
+                rank = rankings.index(aid) + 1 if aid in rankings else '?'
+                lines.extend([
+                    f"#### impl-{aid} (순위: #{rank})",
+                    f"- **접근법**: {impl['approach'].get('name', 'N/A')}",
+                    f"- **브랜치**: `{impl['branch']}`",
+                    f"- **리뷰**: {'✅' if impl.get('review_success') else '❌'}",
+                    f"- **테스트**: {'✅' if impl.get('test_success') else '❌'}",
+                    ""
+                ])
+
+            comp_file = evaluation_summary.get('comparison_file')
+            if comp_file:
+                lines.extend([
+                    "### 비교 보고서",
+                    f"[{comp_file}]({comp_file})",
+                    ""
+                ])
+        else:
+            # 평가 실패
+            lines.extend([
+                "## 평가 실패",
+                "",
+                f"**오류**: {evaluation_summary.get('error', 'Unknown')}",
+                ""
+            ])
+
+        lines.extend([
+            "---",
+            "",
+            "## 다음 단계",
+            "",
+            "1. 위 평가 결과를 검토하세요",
+            "2. 각 구현의 코드를 확인하세요:",
+            ""
+        ])
+
+        for impl in implementations:
+            lines.append(f"   - impl-{impl['approach_id']}: `{impl['worktree_path']}`")
+
+        lines.extend([
+            "",
+            "3. 원하는 구현을 선택하여 타겟 프로젝트에 머지하세요:",
+            "   ```bash",
+            "   cd <타겟-프로젝트>",
+            "   git merge <선택한-브랜치>",
+            "   ```",
+            ""
+        ])
+
+        result_file.write_text('\n'.join(lines), encoding='utf-8')
+        self.logger.info(f"평가 결과 저장: {result_file}")
+
+    # ── (구버전) Phase 5/6 메서드 - 사용 안 함 ────────────────
 
     def _wait_for_selection(
         self,

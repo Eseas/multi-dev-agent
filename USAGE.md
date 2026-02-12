@@ -48,19 +48,17 @@
     v                              (N=1이면 건너뜀)
 [Phase 4] Comparator: N개 구현 비교 + 순위 매기기
     |
-    v                              (N=1이면 건너뜀)
-[Phase 5] Human Selection: 사용자가 최종 구현 선택
-    |
     v
-[Phase 6] Integration: 선택된 브랜치 정보 알림
+[완료] evaluation-result.md 생성 → 사용자가 수동으로 브랜치 머지
 ```
 
 ### 핵심 특징
 
-- **N=1**: 단일 구현. Phase 4/5를 건너뛰고 바로 Phase 6으로 진행
-- **N>=2**: 병렬 구현 + 비교 + 선택. 전체 파이프라인 실행
+- **N=1**: 단일 구현. Phase 4를 건너뛰고 바로 평가 결과 저장
+- **N>=2**: 병렬 구현 + 비교 평가. Phase 4까지 실행 후 평가 결과 저장
 - **git worktree 격리**: 각 구현이 독립 브랜치에서 실행되어 서로 간섭 없음
 - **체크포인트**: Phase 1 후 사용자 검토 기회 제공. 개별 approach 승인/반려 가능
+- **평가 후 종료**: 평가 결과만 제공, merge는 사용자가 수동으로 진행
 - **시스템 알림**: macOS/Linux/Windows 네이티브 알림 지원
 
 ---
@@ -712,8 +710,12 @@ python3 cli.py run -s my-spec.md
 # 2. 새로운 터미널을 열어서 승인 (기존 터미널은 대기 중이므로)
 python3 cli.py approve task-20250211-153000
 
-# 3. Phase 2~6 자동 진행 후 완료
-# → git merge task-20250211-153000/impl-1
+# 3. Phase 2~3 자동 진행 후 평가 결과 저장
+# → workspace/tasks/task-20250211-153000/evaluation-result.md 확인
+
+# 4. 원하면 구현을 타겟 프로젝트에 수동으로 머지
+cd <타겟-프로젝트>
+git merge task-20250211-153000/impl-1
 ```
 
 ### 시나리오 B: 2개 방법 비교 (N=2)
@@ -725,19 +727,18 @@ python3 cli.py run -s auth-spec.md
 # 2. Phase 1 후 체크포인트 — 새 터미널에서 2개 모두 승인
 python3 cli.py approve task-20250211-160000
 
-# 3. Phase 2(병렬 구현) → Phase 3(병렬 리뷰+테스트) → Phase 4(비교) 자동 진행
+# 3. Phase 2(병렬 구현) → Phase 3(병렬 리뷰+테스트) → Phase 4(비교) 자동 진행 후 완료
 
-# 4. Phase 5 대기 — 새 터미널에서 비교 결과 확인
-python3 cli.py status task-20250211-160000
+# 4. 평가 결과 확인
+cat workspace/tasks/task-20250211-160000/evaluation-result.md
 # → Rankings: [2, 1]
 # → 추천 구현: impl-2
 
-# 5. comparison.md 확인 후 선택
 cat workspace/tasks/task-20250211-160000/comparator/comparison.md
-python3 cli.py select task-20250211-160000 2
 
-# 6. Phase 6 완료
-# → git merge task-20250211-160000/impl-2
+# 5. 원하는 구현을 타겟 프로젝트에 수동으로 머지
+cd <타겟-프로젝트>
+git merge task-20250211-160000/impl-2  # 추천된 impl-2 선택
 ```
 
 ### 시나리오 C: 3개 중 1개 반려 (N=3, 개별 승인)
@@ -750,8 +751,12 @@ python3 cli.py run -s complex-spec.md
 python3 cli.py approve task-20250211-170000 --approaches 1,2 --reject 3
 # → 방법 1, 2만 Phase 2로 진행 (방법 3은 제외)
 
-# 3. 이후 2개 구현에 대해 Phase 2~5 진행, 새 터미널에서 선택
-python3 cli.py select task-20250211-170000 1
+# 3. 이후 2개 구현에 대해 Phase 2~4 진행 후 평가 결과 확인
+cat workspace/tasks/task-20250211-170000/evaluation-result.md
+
+# 4. 원하는 구현 선택하여 머지
+cd <타겟-프로젝트>
+git merge task-20250211-170000/impl-1  # impl-1 선택
 ```
 
 ### 시나리오 D: watch 모드로 자동 실행
@@ -898,17 +903,17 @@ python3 cli.py approve <task-id> --reject 3      # 개별 반려
 python3 cli.py revise <task-id> -f "피드백"       # 수정 요청
 python3 cli.py abort <task-id>                   # 중단
 
-# === 선택 (Phase 5, N>=2) ===
-# ⚠️ 새로운 터미널에서 실행
-python3 cli.py select <task-id> <impl-id>        # 구현 선택
-
 # === 상태 확인 ===
 python3 cli.py status                            # 전체 목록
 python3 cli.py status <task-id>                  # 상세 상태
 
-# === 통합 (Phase 6 완료 후) ===
+# === 평가 결과 확인 (파이프라인 완료 후) ===
+cat workspace/tasks/<task-id>/evaluation-result.md  # 평가 요약
+cat workspace/tasks/<task-id>/comparator/comparison.md  # 상세 비교 (N≥2)
+
+# === 수동 머지 ===
 cd <타겟-프로젝트>
-git merge <task-id>/impl-<N>                      # 선택된 브랜치 병합
+git merge <task-id>/impl-<N>                      # 원하는 브랜치 병합
 ```
 
 > **참고**: `pip3 install -e .` 설치 후에는 `python3 cli.py` 대신 `multi-agent-dev` 명령을 사용할 수 있습니다.
