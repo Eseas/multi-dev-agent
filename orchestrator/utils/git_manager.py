@@ -160,7 +160,7 @@ class GitManager:
 
         logger.info(f"worktree 생성: {worktree_path} (branch: {branch_name})")
         self._run_git([
-            'worktree', 'add', str(worktree_path),
+            'worktree', 'add', str(worktree_path.resolve()),  # 절대 경로로 변환
             '-b', branch_name,
             f'origin/{self.default_branch}'
         ], cwd=self.clone_dir)
@@ -180,7 +180,7 @@ class GitManager:
 
         try:
             self._run_git([
-                'worktree', 'remove', str(worktree_path), '--force'
+                'worktree', 'remove', str(worktree_path.resolve()), '--force'  # 절대 경로로 변환
             ], cwd=self.clone_dir)
             logger.info(f"worktree 제거됨: {worktree_path}")
         except GitError as e:

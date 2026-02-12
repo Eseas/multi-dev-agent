@@ -97,6 +97,8 @@ multi-agent-dev run -s planning-spec.md
 multi-agent-dev status
 ```
 
+> **참고**: 이 문서의 예제는 `python3 cli.py` 방식을 기준으로 작성되었습니다. `pip install` 후 `multi-agent-dev` 명령을 사용하려면 `python3 cli.py`를 `multi-agent-dev`로 바꾸면 됩니다.
+
 ### 방법 2: 직접 실행 (설치 없이)
 
 의존성만 설치하고 `python3 cli.py`로 직접 실행합니다.
@@ -125,10 +127,6 @@ python3 cli.py status
 ### 초기화
 
 ```bash
-# 방법 1로 설치한 경우
-multi-agent-dev init
-
-# 방법 2로 실행하는 경우
 python3 cli.py init
 ```
 
@@ -271,19 +269,19 @@ project:
 ### 기본 실행
 
 ```bash
-python cli.py run -s planning-spec.md
+python3 cli.py run -s planning-spec.md
 ```
 
 ### 상세 로깅
 
 ```bash
-python cli.py run -s planning-spec.md -v
+python3 cli.py run -s planning-spec.md -v
 ```
 
 ### 커스텀 설정 파일
 
 ```bash
-python cli.py run -s planning-spec.md -c my-config.yaml
+python3 cli.py run -s planning-spec.md -c my-config.yaml
 ```
 
 ### 실행 후 흐름
@@ -305,7 +303,7 @@ python cli.py run -s planning-spec.md -c my-config.yaml
 ### `init` — 설정 파일 생성
 
 ```bash
-python cli.py init [-o config.yaml]
+python3 cli.py init [-o config.yaml]
 ```
 
 기본 `config.yaml`을 생성합니다. 이미 존재하면 덮어쓸지 확인합니다.
@@ -315,7 +313,7 @@ python cli.py init [-o config.yaml]
 ### `run` — 파이프라인 실행
 
 ```bash
-python cli.py run -s <기획서경로> [-c config.yaml] [-v]
+python3 cli.py run -s <기획서경로> [-c config.yaml] [-v]
 ```
 
 | 옵션 | 설명 |
@@ -342,18 +340,20 @@ python cli.py run -s <기획서경로> [-c config.yaml] [-v]
 
 ### `approve` — 체크포인트 승인
 
+**⚠️ 새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
+
 ```bash
 # 전체 승인
-python cli.py approve <task-id>
+python3 cli.py approve <task-id>
 
 # 특정 approach만 승인 (N>=2)
-python cli.py approve <task-id> --approaches 1,2
+python3 cli.py approve <task-id> --approaches 1,2
 
 # 특정 approach 반려 (N>=2)
-python cli.py approve <task-id> --reject 3
+python3 cli.py approve <task-id> --reject 3
 
 # 조합 사용
-python cli.py approve <task-id> --approaches 1,2 --reject 3
+python3 cli.py approve <task-id> --approaches 1,2 --reject 3
 ```
 
 | 옵션 | 설명 |
@@ -371,8 +371,10 @@ python cli.py approve <task-id> --approaches 1,2 --reject 3
 
 ### `select` — 구현 선택 (Phase 5, N>=2)
 
+**⚠️ 새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
+
 ```bash
-python cli.py select <task-id> <impl-id>
+python3 cli.py select <task-id> <impl-id>
 ```
 
 Phase 4(Comparator)가 완료된 후, 사용자가 최종 구현을 선택하는 명령입니다.
@@ -380,7 +382,7 @@ Phase 4(Comparator)가 완료된 후, 사용자가 최종 구현을 선택하는
 **예시**:
 ```bash
 # comparison.md 확인 후
-python cli.py select task-20250211-153000 2
+python3 cli.py select task-20250211-153000 2
 # → [SELECTED] task-20250211-153000: impl-2 선택 완료
 ```
 
@@ -390,12 +392,14 @@ python cli.py select task-20250211-153000 2
 
 ### `revise` — 수정 요청
 
+**⚠️ 새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
+
 ```bash
 # 피드백과 함께
-python cli.py revise <task-id> --feedback "API 설계를 변경해주세요"
+python3 cli.py revise <task-id> --feedback "API 설계를 변경해주세요"
 
 # 대화형 입력
-python cli.py revise <task-id>
+python3 cli.py revise <task-id>
 # → 수정 피드백을 입력하세요 (빈 줄로 종료):
 ```
 
@@ -406,8 +410,10 @@ Phase 1 체크포인트에서 Architect의 설계에 수정이 필요할 때 사
 
 ### `abort` — 태스크 중단
 
+**⚠️ 새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
+
 ```bash
-python cli.py abort <task-id>
+python3 cli.py abort <task-id>
 ```
 
 실행 중인 파이프라인을 즉시 중단합니다.
@@ -418,10 +424,10 @@ python cli.py abort <task-id>
 
 ```bash
 # 전체 태스크 목록
-python cli.py status
+python3 cli.py status
 
 # 특정 태스크 상세
-python cli.py status <task-id>
+python3 cli.py status <task-id>
 ```
 
 **상세 출력 예시** (N>=2):
@@ -447,7 +453,7 @@ Rankings: [2, 1, 3]
 비교 보고서: ./workspace/tasks/task-20250211-153000/comparator/comparison.md
 
 추천 구현: impl-2
-선택하려면: multi-agent-dev select task-20250211-153000 <impl-id>
+선택하려면: python3 cli.py select task-20250211-153000 <impl-id>
 ```
 
 ---
@@ -455,7 +461,7 @@ Rankings: [2, 1, 3]
 ### `watch` — 감시 모드
 
 ```bash
-python cli.py watch [-c config.yaml]
+python3 cli.py watch [-c config.yaml]
 ```
 
 `workspace/planning/completed/` 디렉토리를 5초 간격으로 감시합니다.
@@ -700,11 +706,11 @@ multi-agent-dev-system/
 
 ```bash
 # 1. config.yaml에 target_repo 설정 후
-python cli.py run -s my-spec.md
+python3 cli.py run -s my-spec.md
 # → Phase 1 완료, 체크포인트 대기
 
-# 2. 다른 터미널에서 승인
-python cli.py approve task-20250211-153000
+# 2. 새로운 터미널을 열어서 승인 (기존 터미널은 대기 중이므로)
+python3 cli.py approve task-20250211-153000
 
 # 3. Phase 2~6 자동 진행 후 완료
 # → git merge task-20250211-153000/impl-1
@@ -714,21 +720,21 @@ python cli.py approve task-20250211-153000
 
 ```bash
 # 1. 기획서에 "### 방법 1", "### 방법 2" 작성 후 실행
-python cli.py run -s auth-spec.md
+python3 cli.py run -s auth-spec.md
 
-# 2. Phase 1 후 체크포인트 — 2개 모두 승인
-python cli.py approve task-20250211-160000
+# 2. Phase 1 후 체크포인트 — 새 터미널에서 2개 모두 승인
+python3 cli.py approve task-20250211-160000
 
 # 3. Phase 2(병렬 구현) → Phase 3(병렬 리뷰+테스트) → Phase 4(비교) 자동 진행
 
-# 4. Phase 5 대기 — 비교 결과 확인
-python cli.py status task-20250211-160000
+# 4. Phase 5 대기 — 새 터미널에서 비교 결과 확인
+python3 cli.py status task-20250211-160000
 # → Rankings: [2, 1]
 # → 추천 구현: impl-2
 
 # 5. comparison.md 확인 후 선택
 cat workspace/tasks/task-20250211-160000/comparator/comparison.md
-python cli.py select task-20250211-160000 2
+python3 cli.py select task-20250211-160000 2
 
 # 6. Phase 6 완료
 # → git merge task-20250211-160000/impl-2
@@ -738,21 +744,21 @@ python cli.py select task-20250211-160000 2
 
 ```bash
 # 1. 기획서에 3개 방법 작성 후 실행
-python cli.py run -s complex-spec.md
+python3 cli.py run -s complex-spec.md
 
-# 2. Phase 1 후 — 방법 3이 마음에 들지 않으면
-python cli.py approve task-20250211-170000 --approaches 1,2 --reject 3
+# 2. Phase 1 후 — 새 터미널에서 방법 3이 마음에 들지 않으면
+python3 cli.py approve task-20250211-170000 --approaches 1,2 --reject 3
 # → 방법 1, 2만 Phase 2로 진행 (방법 3은 제외)
 
-# 3. 이후 2개 구현에 대해 Phase 2~5 진행
-python cli.py select task-20250211-170000 1
+# 3. 이후 2개 구현에 대해 Phase 2~5 진행, 새 터미널에서 선택
+python3 cli.py select task-20250211-170000 1
 ```
 
 ### 시나리오 D: watch 모드로 자동 실행
 
 ```bash
 # 1. watch 모드 시작
-python cli.py watch
+python3 cli.py watch
 
 # 2. 다른 터미널에서 기획서를 completed 디렉토리에 배치
 cp my-spec.md workspace/planning/completed/my-feature/planning-spec.md
@@ -814,11 +820,11 @@ claude --version
 
 **원인**: `approve`/`revise`/`abort` 명령을 아직 실행하지 않음
 
-**해결**: 다른 터미널에서 명령 실행
+**해결**: 새로운 터미널을 열어서 명령 실행 (파이프라인 실행 터미널은 대기 중이므로)
 ```bash
-python cli.py approve <task-id>
+python3 cli.py approve <task-id>
 # 또는
-python cli.py abort <task-id>
+python3 cli.py abort <task-id>
 ```
 
 기본 타임아웃은 1시간(3600초)입니다.
@@ -827,13 +833,13 @@ python cli.py abort <task-id>
 
 **원인**: `select` 명령을 아직 실행하지 않음
 
-**해결**:
+**해결**: 새로운 터미널에서 명령 실행
 ```bash
 # 추천 확인
-python cli.py status <task-id>
+python3 cli.py status <task-id>
 
 # 선택
-python cli.py select <task-id> <impl-id>
+python3 cli.py select <task-id> <impl-id>
 ```
 
 ### 모든 구현이 실패
@@ -875,34 +881,34 @@ python cli.py select <task-id> <impl-id>
 
 ## 부록: 자주 사용하는 명령 모음
 
-> `multi-agent-dev`는 `pip3 install -e .` 설치 시 사용 가능합니다.
-> 설치 없이 실행할 때는 `python3 cli.py`로 대체하세요.
-
 ```bash
 # === 초기 설정 ===
-multi-agent-dev init                              # config.yaml 생성
-# 또는: python3 cli.py init
+python3 cli.py init                              # config.yaml 생성
 
 # === 실행 ===
-multi-agent-dev run -s spec.md                    # 파이프라인 실행
-multi-agent-dev run -s spec.md -v                 # 상세 로깅
-multi-agent-dev watch                             # 감시 모드
+python3 cli.py run -s spec.md                    # 파이프라인 실행
+python3 cli.py run -s spec.md -v                 # 상세 로깅
+python3 cli.py watch                             # 감시 모드
 
 # === 체크포인트 (Phase 1 후) ===
-multi-agent-dev approve <task-id>                 # 전체 승인
-multi-agent-dev approve <task-id> --approaches 1,2  # 개별 승인
-multi-agent-dev approve <task-id> --reject 3      # 개별 반려
-multi-agent-dev revise <task-id> -f "피드백"       # 수정 요청
-multi-agent-dev abort <task-id>                   # 중단
+# ⚠️ 새로운 터미널에서 실행 (파이프라인 터미널은 대기 중)
+python3 cli.py approve <task-id>                 # 전체 승인
+python3 cli.py approve <task-id> --approaches 1,2  # 개별 승인
+python3 cli.py approve <task-id> --reject 3      # 개별 반려
+python3 cli.py revise <task-id> -f "피드백"       # 수정 요청
+python3 cli.py abort <task-id>                   # 중단
 
 # === 선택 (Phase 5, N>=2) ===
-multi-agent-dev select <task-id> <impl-id>        # 구현 선택
+# ⚠️ 새로운 터미널에서 실행
+python3 cli.py select <task-id> <impl-id>        # 구현 선택
 
 # === 상태 확인 ===
-multi-agent-dev status                            # 전체 목록
-multi-agent-dev status <task-id>                  # 상세 상태
+python3 cli.py status                            # 전체 목록
+python3 cli.py status <task-id>                  # 상세 상태
 
 # === 통합 (Phase 6 완료 후) ===
 cd <타겟-프로젝트>
 git merge <task-id>/impl-<N>                      # 선택된 브랜치 병합
 ```
+
+> **참고**: `pip3 install -e .` 설치 후에는 `python3 cli.py` 대신 `multi-agent-dev` 명령을 사용할 수 있습니다.
