@@ -177,12 +177,13 @@ multi-agent-dev-system/
     │   └── task-YYYYMMDD-HHMMSS/  #     각 태스크 디렉토리
     │       ├── planning-spec.md   #       기획서 복사본
     │       ├── manifest.json      #       태스크 상태
+    │       ├── full-conversation.txt  #   🆕 전체 대화 내역 (모든 Phase 통합)
     │       ├── project-profile.json  #    🆕 프로젝트 분석 결과
     │       ├── architect/         #       Architect 출력
-    │       │   └── conversation.txt  #     🆕 대화 내역 (분석용)
+    │       │   └── conversation.txt  #     🆕 대화 내역 (Phase별)
     │       └── implementations/   #       구현들 (git worktree)
     │           ├── impl-1/
-    │           │   └── conversation.txt  # 🆕 대화 내역 (분석용)
+    │           │   └── conversation.txt  # 🆕 대화 내역 (Phase별)
     │           ├── impl-2/
     │           └── impl-3/
     └── .cache/                    #   Git clone 캐시

@@ -525,6 +525,7 @@ workspace/tasks/task-YYYYMMDD-HHMMSS/
 ├── planning-spec.md         # 기획서 복사본
 ├── manifest.json            # 태스크 메타데이터 + 단계별 상태
 ├── timeline.log             # 이벤트 타임라인 로그
+├── full-conversation.txt    # 🆕 전체 대화 내역 (모든 Phase 통합, 시간순)
 ├── checkpoint-decision.json # Phase 1 체크포인트 결정 (임시, 처리 후 삭제)
 ├── validation-errors.md     # 검증 실패 시 오류 보고서
 ├── project-profile.json     # 프로젝트 분석 결과 (디버깅용 복사본)
@@ -561,14 +562,14 @@ workspace/tasks/task-YYYYMMDD-HHMMSS/
 └── integration-info.json    # Phase 6: 통합 브랜치 정보
 ```
 
-**대화 내역 (conversation.txt)**:
+**대화 내역 (conversation.txt, full-conversation.txt)**:
 
-각 Phase에서 Claude Code와 주고받은 전체 대화 내역이 `conversation.txt` 파일로 자동 저장됩니다.
+각 Phase에서 Claude Code와 주고받은 대화 내역이 자동으로 저장됩니다.
 
-- **용도**: 프롬프트 분석, 디버깅, 학습 자료
-- **포맷**: 프롬프트 + Claude 출력 + 메타데이터 (타임스탬프, 실행 시간 등)
-- **비용**: 저장만 하므로 추가 토큰 비용 없음 (다음 Phase에 전달 안 함)
-- **예시**:
+**1. 각 Phase별 대화 내역** (`conversation.txt`):
+- 위치: 각 Phase 디렉토리 내부 (architect/, implementations/impl-1/, review-1/ 등)
+- 용도: 특정 Phase의 대화만 확인
+- 포맷:
   ```
   === CONVERSATION TRANSCRIPT ===
   Generated at: 2025-02-11T15:30:45
@@ -584,6 +585,36 @@ workspace/tasks/task-YYYYMMDD-HHMMSS/
   Success: True
   Duration: 120.45s
   ```
+
+**2. 전체 대화 내역** (`full-conversation.txt`):
+- 위치: `workspace/tasks/task-YYYYMMDD-HHMMSS/full-conversation.txt`
+- 용도: 모든 Phase의 대화를 시간순으로 한눈에 확인
+- 포맷:
+  ```
+  ===== TASK: task-20250211-153045 =====
+  ===== PHASE 1: ARCHITECT =====
+  Timestamp: 2025-02-11T15:30:45
+  Duration: 120.45s
+  Success: True
+
+  === PROMPT ===
+  (프롬프트)
+
+  === CLAUDE OUTPUT ===
+  (응답)
+
+  ========================================
+
+  ===== PHASE 2: IMPLEMENTER 1 =====
+  Timestamp: 2025-02-11T15:35:20
+  ...
+  ```
+
+**공통 특징**:
+- ✅ **추가 토큰 비용: 0원** (저장만, 다음 Phase에 전달 안 함)
+- ✅ **성공/실패 모두 저장** (디버깅에 유용)
+- ✅ **자동 저장** (별도 설정 불필요)
+- ✅ **프롬프트 분석 용이** (추후 프롬프트 개선에 활용)
 
 **프로젝트 캐시 구조** (Git clone 캐시):
 

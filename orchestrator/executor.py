@@ -310,6 +310,9 @@ class ClaudeExecutor:
         """
         대화 내역을 파일로 저장한다.
 
+        1. 각 Phase별 conversation.txt에 저장 (기존)
+        2. task-level full-conversation.txt에 append (신규)
+
         Args:
             prompt: 전송한 프롬프트
             output: Claude의 출력
@@ -319,9 +322,10 @@ class ClaudeExecutor:
             returncode: 종료 코드
         """
         try:
-            transcript_path = working_dir / 'conversation.txt'
             timestamp = datetime.now().isoformat()
 
+            # 1. 각 Phase별 conversation.txt 저장 (기존)
+            transcript_path = working_dir / 'conversation.txt'
             transcript_content = f"""=== CONVERSATION TRANSCRIPT ===
 Generated at: {timestamp}
 
@@ -342,6 +346,139 @@ Timestamp: {timestamp}
             transcript_path.write_text(transcript_content, encoding='utf-8')
             logger.debug(f"Conversation transcript saved to {transcript_path}")
 
+            # 2. task-level full-conversation.txt에 append (신규)
+            self._append_to_full_transcript(
+                prompt=prompt,
+                output=output,
+                working_dir=working_dir,
+                success=success,
+                duration=duration,
+                returncode=returncode,
+                timestamp=timestamp
+            )
+
         except Exception as e:
             # 대화 내역 저장 실패는 치명적이지 않음 (로그만 남김)
             logger.warning(f"Failed to save conversation transcript: {e}")
+
+    def _append_to_full_transcript(
+        self,
+        prompt: str,
+        output: str,
+        working_dir: Path,
+        success: bool,
+        duration: float,
+        returncode: int,
+        timestamp: str
+    ) -> None:
+        """
+        전체 대화 내역 파일에 append한다.
+
+        working_dir에서 task_dir을 추론하여 full-conversation.txt에 저장.
+        패턴: workspace/tasks/task-YYYYMMDD-HHMMSS/
+
+        Args:
+            prompt: 전송한 프롬프트
+            output: Claude의 출력
+            working_dir: 작업 디렉토리
+            success: 실행 성공 여부
+            duration: 실행 시간 (초)
+            returncode: 종료 코드
+            timestamp: ISO 타임스탬프
+        """
+        try:
+            import re
+
+            # working_dir에서 task_dir 추출
+            # 패턴: .../workspace/tasks/task-YYYYMMDD-HHMMSS/...
+            working_dir_str = str(working_dir.resolve())
+            match = re.search(r'(.*?/workspace/tasks/(task-\d{8}-\d{6}))', working_dir_str)
+
+            if not match:
+                # task 디렉토리가 아니면 스킵
+                logger.debug(f"Not a task directory, skipping full transcript: {working_dir}")
+                return
+
+            task_dir = Path(match.group(1)).resolve()
+            task_id = match.group(2)
+
+            # Phase 이름 추론 (working_dir에서)
+            # resolve()로 실제 경로 변환 (심볼릭 링크 해결)
+            working_dir_resolved = working_dir.resolve()
+            relative_path = working_dir_resolved.relative_to(task_dir)
+            phase_name = self._infer_phase_name(relative_path)
+
+            # full-conversation.txt 경로
+            full_transcript_path = task_dir / 'full-conversation.txt'
+
+            # append 모드로 저장
+            phase_entry = f"""
+===== TASK: {task_id} =====
+===== {phase_name} =====
+Timestamp: {timestamp}
+Working Directory: {working_dir}
+Duration: {duration:.2f}s
+Success: {success}
+Exit Code: {returncode}
+
+=== PROMPT ===
+{prompt}
+
+=== CLAUDE OUTPUT ===
+{output}
+
+========================================
+
+"""
+
+            with open(full_transcript_path, 'a', encoding='utf-8') as f:
+                f.write(phase_entry)
+
+            logger.debug(f"Appended to full transcript: {full_transcript_path}")
+
+        except Exception as e:
+            logger.debug(f"Failed to append to full transcript: {e}")
+
+    def _infer_phase_name(self, relative_path: Path) -> str:
+        """
+        relative_path에서 Phase 이름을 추론한다.
+
+        예시:
+        - architect/ → "PHASE 1: ARCHITECT"
+        - implementations/impl-1/ → "PHASE 2: IMPLEMENTER 1"
+        - review-1/ → "PHASE 3: REVIEWER 1"
+        - test-2/ → "PHASE 3: TESTER 2"
+        - comparator/ → "PHASE 4: COMPARATOR"
+        """
+        parts = relative_path.parts
+
+        if not parts:
+            return "UNKNOWN PHASE"
+
+        first_part = parts[0]
+
+        # Architect
+        if first_part == 'architect':
+            return "PHASE 1: ARCHITECT"
+
+        # Implementer
+        if first_part == 'implementations' and len(parts) > 1:
+            impl_num = parts[1].replace('impl-', '')
+            return f"PHASE 2: IMPLEMENTER {impl_num}"
+
+        # Reviewer
+        if first_part.startswith('review-'):
+            review_num = first_part.replace('review-', '')
+            return f"PHASE 3: REVIEWER {review_num}"
+
+        # Tester
+        if first_part.startswith('test-'):
+            test_num = first_part.replace('test-', '')
+            return f"PHASE 3: TESTER {test_num}"
+
+        # Comparator
+        if first_part == 'comparator':
+            return "PHASE 4: COMPARATOR"
+
+        # Unknown
+        return f"PHASE UNKNOWN: {first_part}"
