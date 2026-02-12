@@ -107,6 +107,12 @@ class Orchestrator:
         self.num_approaches = self.config.get('pipeline', {}).get(
             'num_approaches', 1
         )
+        self.enable_review = self.config.get('pipeline', {}).get(
+            'enable_review', True
+        )
+        self.enable_test = self.config.get('pipeline', {}).get(
+            'enable_test', True
+        )
 
     def run_from_spec(self, spec_path: Path) -> Dict[str, Any]:
         """기획서 기반으로 전체 파이프라인을 실행한다.
@@ -352,18 +358,22 @@ class Orchestrator:
             self.notifier.notify_stage_completed("Phase 2: Implementation")
 
             # === Phase 3: Review & Test (병렬) ===
-            self.logger.info("Phase 3: Review & Test 시작")
-            self.notifier.notify_stage_started("Phase 3: Review & Test")
+            if self.enable_review or self.enable_test:
+                self.logger.info("Phase 3: Review & Test 시작")
+                self.notifier.notify_stage_started("Phase 3: Review & Test")
 
-            self._log_timeline(timeline_file, "PHASE", "review_test_start")
-            self._update_manifest(
-                manifest_file, manifest, 'phase3_review_test'
-            )
-            self._run_reviewers_and_testers_parallel(impl_results, task_dir)
-            manifest['phases']['phase3'] = {'status': 'completed'}
-            self._log_timeline(timeline_file, "PHASE", "review_test_done")
+                self._log_timeline(timeline_file, "PHASE", "review_test_start")
+                self._update_manifest(
+                    manifest_file, manifest, 'phase3_review_test'
+                )
+                self._run_reviewers_and_testers_parallel(impl_results, task_dir)
+                manifest['phases']['phase3'] = {'status': 'completed'}
+                self._log_timeline(timeline_file, "PHASE", "review_test_done")
 
-            self.notifier.notify_stage_completed("Phase 3: Review & Test")
+                self.notifier.notify_stage_completed("Phase 3: Review & Test")
+            else:
+                self.logger.info("Phase 3 (Review & Test) 스킵 - 비활성화됨")
+                manifest['phases']['phase3'] = {'status': 'skipped'}
 
             # 성공한 구현 필터링
             successful_impls = [r for r in impl_results if r['success']]
@@ -560,40 +570,48 @@ class Orchestrator:
         self, impl: Dict, task_dir: Path
     ) -> None:
         """단일 구현에 대해 Reviewer + Tester를 실행한다."""
-        reviewer_prompt = self.prompts_dir / 'reviewer.md'
-        tester_prompt = self.prompts_dir / 'tester.md'
-
         approach_id = impl['approach_id']
         impl_path = impl['worktree_path']
 
-        review_workspace = task_dir / f'review-{approach_id}'
-        test_workspace = task_dir / f'test-{approach_id}'
-        review_workspace.mkdir(parents=True, exist_ok=True)
-        test_workspace.mkdir(parents=True, exist_ok=True)
-
         # Reviewer
-        reviewer = ReviewerAgent(
-            approach_id, review_workspace,
-            self.executor, reviewer_prompt
-        )
-        review_result = reviewer.run({
-            'impl_path': impl_path,
-            'approach': impl.get('approach', {})  # approach 정보 전달
-        })
-        impl['review_success'] = review_result['success']
-        impl['review_workspace'] = str(review_workspace)
+        if self.enable_review:
+            reviewer_prompt = self.prompts_dir / 'reviewer.md'
+            review_workspace = task_dir / f'review-{approach_id}'
+            review_workspace.mkdir(parents=True, exist_ok=True)
+
+            reviewer = ReviewerAgent(
+                approach_id, review_workspace,
+                self.executor, reviewer_prompt
+            )
+            review_result = reviewer.run({
+                'impl_path': impl_path,
+                'approach': impl.get('approach', {})  # approach 정보 전달
+            })
+            impl['review_success'] = review_result['success']
+            impl['review_workspace'] = str(review_workspace)
+        else:
+            impl['review_success'] = None
+            impl['review_workspace'] = ''
 
         # Tester
-        tester = TesterAgent(
-            approach_id, test_workspace,
-            self.executor, tester_prompt
-        )
-        test_result = tester.run({
-            'impl_path': impl_path,
-            'approach': impl.get('approach', {})  # approach 정보 전달
-        })
-        impl['test_success'] = test_result['success']
-        impl['test_workspace'] = str(test_workspace)
+        if self.enable_test:
+            tester_prompt = self.prompts_dir / 'tester.md'
+            test_workspace = task_dir / f'test-{approach_id}'
+            test_workspace.mkdir(parents=True, exist_ok=True)
+
+            tester = TesterAgent(
+                approach_id, test_workspace,
+                self.executor, tester_prompt
+            )
+            test_result = tester.run({
+                'impl_path': impl_path,
+                'approach': impl.get('approach', {})  # approach 정보 전달
+            })
+            impl['test_success'] = test_result['success']
+            impl['test_workspace'] = str(test_workspace)
+        else:
+            impl['test_success'] = None
+            impl['test_workspace'] = ''
 
     # ── Phase 4: 비교 (N≥2) ────────────────────────────────
 
@@ -1028,7 +1046,9 @@ class Orchestrator:
             },
             'pipeline': {
                 'checkpoint_phase1': True,
-                'num_approaches': 1
+                'num_approaches': 1,
+                'enable_review': True,
+                'enable_test': True
             },
             'validation': {
                 'enabled': True,
