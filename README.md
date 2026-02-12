@@ -178,8 +178,11 @@ multi-agent-dev-system/
     │       ├── planning-spec.md   #       기획서 복사본
     │       ├── manifest.json      #       태스크 상태
     │       ├── project-profile.json  #    🆕 프로젝트 분석 결과
+    │       ├── architect/         #       Architect 출력
+    │       │   └── conversation.txt  #     🆕 대화 내역 (분석용)
     │       └── implementations/   #       구현들 (git worktree)
     │           ├── impl-1/
+    │           │   └── conversation.txt  # 🆕 대화 내역 (분석용)
     │           ├── impl-2/
     │           └── impl-3/
     └── .cache/                    #   Git clone 캐시

@@ -530,27 +530,60 @@ workspace/tasks/task-YYYYMMDD-HHMMSS/
 ├── project-profile.json     # 프로젝트 분석 결과 (디버깅용 복사본)
 │
 ├── architect/               # Phase 1 출력
-│   └── (Architect 결과물)
+│   ├── (Architect 결과물)
+│   └── conversation.txt     # Architect-Claude 대화 내역 (분석용)
 │
 ├── implementations/
 │   ├── impl-1/              # Phase 2: git worktree (독립 브랜치)
+│   │   └── conversation.txt # Implementer 1 대화 내역 (분석용)
 │   ├── impl-2/              # Phase 2: git worktree (독립 브랜치)
+│   │   └── conversation.txt # Implementer 2 대화 내역 (분석용)
 │   └── impl-3/              # Phase 2: git worktree (독립 브랜치)
+│       └── conversation.txt # Implementer 3 대화 내역 (분석용)
 │
 ├── review-1/                # Phase 3: impl-1 리뷰 결과
+│   └── conversation.txt     # Reviewer 1 대화 내역 (분석용)
 ├── review-2/                # Phase 3: impl-2 리뷰 결과
+│   └── conversation.txt     # Reviewer 2 대화 내역 (분석용)
 ├── test-1/                  # Phase 3: impl-1 테스트 결과
+│   └── conversation.txt     # Tester 1 대화 내역 (분석용)
 ├── test-2/                  # Phase 3: impl-2 테스트 결과
+│   └── conversation.txt     # Tester 2 대화 내역 (분석용)
 │
 ├── comparator/              # Phase 4 출력 (N>=2)
 │   ├── comparison.md        #   비교 보고서
-│   └── rankings.json        #   순위 데이터
+│   ├── rankings.json        #   순위 데이터
+│   └── conversation.txt     # Comparator 대화 내역 (분석용)
 │
 ├── human-review.json        # Phase 5: 사용자 선택 요청 (추천 정보 포함)
 ├── selection-decision.json  # Phase 5: 사용자의 선택 결과
 │
 └── integration-info.json    # Phase 6: 통합 브랜치 정보
 ```
+
+**대화 내역 (conversation.txt)**:
+
+각 Phase에서 Claude Code와 주고받은 전체 대화 내역이 `conversation.txt` 파일로 자동 저장됩니다.
+
+- **용도**: 프롬프트 분석, 디버깅, 학습 자료
+- **포맷**: 프롬프트 + Claude 출력 + 메타데이터 (타임스탬프, 실행 시간 등)
+- **비용**: 저장만 하므로 추가 토큰 비용 없음 (다음 Phase에 전달 안 함)
+- **예시**:
+  ```
+  === CONVERSATION TRANSCRIPT ===
+  Generated at: 2025-02-11T15:30:45
+
+  === PROMPT ===
+  (에이전트에게 전달된 전체 프롬프트)
+
+  === CLAUDE OUTPUT ===
+  (Claude의 전체 응답)
+
+  === EXECUTION METADATA ===
+  Working Directory: /path/to/workspace
+  Success: True
+  Duration: 120.45s
+  ```
 
 **프로젝트 캐시 구조** (Git clone 캐시):
 

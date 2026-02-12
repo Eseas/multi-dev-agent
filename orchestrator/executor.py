@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 import json
+from datetime import datetime
 
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,16 @@ class ClaudeExecutor:
                         output_file.parent.mkdir(parents=True, exist_ok=True)
                         output_file.write_text(result['output'])
 
+                    # 대화 내역 저장
+                    self._save_transcript(
+                        prompt=prompt,
+                        output=result['output'],
+                        working_dir=working_dir,
+                        success=True,
+                        duration=duration,
+                        returncode=0
+                    )
+
                     result['duration'] = duration
                     return result
 
@@ -106,6 +117,15 @@ class ClaudeExecutor:
                 if self._is_non_retryable(last_error):
                     logger.error(
                         f"재시도 불가 에러 감지, 즉시 중단: {last_error}"
+                    )
+                    # 대화 내역 저장 (디버깅용)
+                    self._save_transcript(
+                        prompt=prompt,
+                        output=result.get('output', ''),
+                        working_dir=working_dir,
+                        success=False,
+                        duration=duration,
+                        returncode=-1
                     )
                     return {
                         'success': False,
@@ -122,14 +142,24 @@ class ClaudeExecutor:
                             f"연속 타임아웃 {timeout_count}회, "
                             f"재시도 중단 (timeout={self.timeout}s 증가 필요)"
                         )
+                        error_msg = (
+                            f'연속 타임아웃 {timeout_count}회. '
+                            f'config.yaml의 execution.timeout '
+                            f'(현재 {self.timeout}s)을 늘려주세요.'
+                        )
+                        # 대화 내역 저장 (디버깅용)
+                        self._save_transcript(
+                            prompt=prompt,
+                            output=f"[TIMEOUT] {error_msg}",
+                            working_dir=working_dir,
+                            success=False,
+                            duration=0,
+                            returncode=-1
+                        )
                         return {
                             'success': False,
                             'output': '',
-                            'error': (
-                                f'연속 타임아웃 {timeout_count}회. '
-                                f'config.yaml의 execution.timeout '
-                                f'(현재 {self.timeout}s)을 늘려주세요.'
-                            ),
+                            'error': error_msg,
                             'duration': 0
                         }
 
@@ -142,6 +172,16 @@ class ClaudeExecutor:
                 time.sleep(self.retry_delay)
 
         # All retries failed
+        # 실패한 경우에도 대화 내역 저장 (디버깅용)
+        self._save_transcript(
+            prompt=prompt,
+            output=f"[FAILED] {last_error}",
+            working_dir=working_dir,
+            success=False,
+            duration=0,
+            returncode=-1
+        )
+
         return {
             'success': False,
             'output': '',
@@ -257,3 +297,51 @@ class ClaudeExecutor:
 
         prompt = prompt_file.read_text()
         return self.execute(prompt, working_dir, output_file, env_vars)
+
+    def _save_transcript(
+        self,
+        prompt: str,
+        output: str,
+        working_dir: Path,
+        success: bool,
+        duration: float,
+        returncode: int
+    ) -> None:
+        """
+        대화 내역을 파일로 저장한다.
+
+        Args:
+            prompt: 전송한 프롬프트
+            output: Claude의 출력
+            working_dir: 작업 디렉토리
+            success: 실행 성공 여부
+            duration: 실행 시간 (초)
+            returncode: 종료 코드
+        """
+        try:
+            transcript_path = working_dir / 'conversation.txt'
+            timestamp = datetime.now().isoformat()
+
+            transcript_content = f"""=== CONVERSATION TRANSCRIPT ===
+Generated at: {timestamp}
+
+=== PROMPT ===
+{prompt}
+
+=== CLAUDE OUTPUT ===
+{output}
+
+=== EXECUTION METADATA ===
+Working Directory: {working_dir}
+Success: {success}
+Duration: {duration:.2f}s
+Exit Code: {returncode}
+Timestamp: {timestamp}
+"""
+
+            transcript_path.write_text(transcript_content, encoding='utf-8')
+            logger.debug(f"Conversation transcript saved to {transcript_path}")
+
+        except Exception as e:
+            # 대화 내역 저장 실패는 치명적이지 않음 (로그만 남김)
+            logger.warning(f"Failed to save conversation transcript: {e}")
