@@ -225,10 +225,17 @@ class Orchestrator:
                 f"컨텍스트 {len(project_context)}자"
             )
 
-            # 프로필을 task 디렉토리에도 저장 (디버깅용)
+            # 프로필을 task 디렉토리에 저장 (디버깅용)
             atomic_write(
                 task_dir / 'project-profile.json', project_profile
             )
+
+            # 프로젝트 컨텍스트를 파일로 저장 (에이전트가 참조)
+            project_context_file = task_dir / 'project-context.md'
+            project_context_file.write_text(
+                project_context, encoding='utf-8'
+            )
+            project_context_path = str(project_context_file.resolve())
 
             self._log_timeline(
                 timeline_file, "PHASE", "project_analysis_done"
@@ -252,7 +259,7 @@ class Orchestrator:
                 'spec_content': spec_content,
                 'num_approaches': num_approaches,
                 'project_path': str(clone_path),
-                'project_context': project_context,
+                'project_context_path': project_context_path,
             })
 
             if not arch_result['success']:
@@ -340,7 +347,7 @@ class Orchestrator:
             )
 
             impl_results = self._run_implementations_parallel(
-                task_id, approaches, spec_content, project_context
+                task_id, approaches, spec_content, project_context_path
             )
 
             manifest['phases']['phase2'] = {
@@ -442,7 +449,7 @@ class Orchestrator:
         task_id: str,
         approaches: List[Dict],
         spec_content: str,
-        project_context: str = ''
+        project_context_path: str = ''
     ) -> List[Dict[str, Any]]:
         """N개 Implementer를 병렬로 실행한다."""
         if len(approaches) == 1:
@@ -450,7 +457,7 @@ class Orchestrator:
             return [
                 self._run_single_implementation(
                     task_id, 1, approaches[0],
-                    spec_content, project_context
+                    spec_content, project_context_path
                 )
             ]
 
@@ -462,7 +469,7 @@ class Orchestrator:
                 future = executor.submit(
                     self._run_single_implementation,
                     task_id, i, approach,
-                    spec_content, project_context
+                    spec_content, project_context_path
                 )
                 future_to_idx[future] = i - 1
 
@@ -490,7 +497,7 @@ class Orchestrator:
         impl_id: int,
         approach: Dict,
         spec_content: str,
-        project_context: str = ''
+        project_context_path: str = ''
     ) -> Dict[str, Any]:
         """단일 Implementer를 실행한다."""
         worktree_path = self.git_manager.create_worktree(task_id, impl_id)
@@ -511,7 +518,7 @@ class Orchestrator:
         impl_result = implementer.run({
             'approach': approach,
             'spec_content': spec_content,
-            'project_context': project_context,
+            'project_context_path': project_context_path,
         })
 
         change_summary = {}

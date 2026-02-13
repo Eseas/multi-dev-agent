@@ -47,7 +47,7 @@ class ImplementerAgent(BaseAgent):
         """
         approach = context.get('approach', {})
         spec_content = context.get('spec_content', '')
-        project_context = context.get('project_context', '')
+        project_context_path = context.get('project_context_path', '')
 
         if not approach:
             return {
@@ -66,7 +66,7 @@ class ImplementerAgent(BaseAgent):
             spec_content=spec_content,
             approach=approach_desc,
             approach_id=self.approach_id,
-            project_context=project_context,
+            project_context_path=project_context_path,
         )
 
         # Claude 실행 (git worktree = 타겟 프로젝트 내부에서)
