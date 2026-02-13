@@ -811,73 +811,6 @@ class Orchestrator:
         result_file.write_text('\n'.join(lines), encoding='utf-8')
         self.logger.info(f"평가 결과 저장: {result_file}")
 
-    # ── (구버전) Phase 5/6 메서드 - 사용 안 함 ────────────────
-
-    def _wait_for_selection(
-        self,
-        task_dir: Path,
-        rankings: List[int],
-        impl_results: List[Dict],
-        timeout: int = 3600
-    ) -> Optional[Dict]:
-        """Phase 5: 사용자의 구현 선택을 대기한다."""
-        # 사용자 검토용 요약 저장
-        review_summary = {
-            'rankings': rankings,
-            'recommended': rankings[0] if rankings else None,
-            'implementations': [
-                {
-                    'approach_id': r['approach_id'],
-                    'approach_name': r['approach'].get('name', ''),
-                    'branch': r['branch'],
-                    'review_success': r.get('review_success'),
-                    'test_success': r.get('test_success'),
-                }
-                for r in impl_results
-            ],
-            'comparison_file': str(task_dir / 'comparator' / 'comparison.md'),
-            'instructions': (
-                "다음 명령으로 구현을 선택하세요:\n"
-                f"  multi-agent-dev select <task-id> <impl-id>\n"
-                f"추천: impl-{rankings[0] if rankings else '?'}"
-            )
-        }
-        atomic_write(task_dir / 'human-review.json', review_summary)
-
-        self.logger.info(
-            f"Phase 5: 사용자 선택 대기 중. "
-            f"추천: impl-{rankings[0] if rankings else '?'}"
-        )
-        self.logger.info(
-            "CLI에서 select 명령을 실행하세요."
-        )
-
-        # selection-decision.json 폴링 대기
-        decision_file = task_dir / 'selection-decision.json'
-        decision = FileWaitHelper.wait_for_file_content(
-            decision_file,
-            expected_key='selected_id',
-            timeout=timeout
-        )
-
-        if not decision:
-            return None
-
-        selected_id = decision['selected_id']
-        self.logger.info(f"사용자가 impl-{selected_id}를 선택했습니다.")
-
-        # 선택된 impl 찾기
-        for r in impl_results:
-            if r['approach_id'] == selected_id:
-                return r
-
-        # fallback: ID가 맞지 않으면 첫 번째
-        self.logger.warning(
-            f"선택된 ID {selected_id}를 찾을 수 없습니다. "
-            "첫 번째 구현을 사용합니다."
-        )
-        return impl_results[0]
-
     # ── Checkpoint 처리 ──────────────────────────────────────
 
     def _filter_approaches_by_decision(
@@ -946,41 +879,6 @@ class Orchestrator:
                 pass
 
         return decision
-
-    # ── Phase 6: 통합 알림 ──────────────────────────────────
-
-    def _notify_integration_ready(
-        self,
-        task_id: str,
-        task_dir: Path,
-        branch: str,
-        worktree_path: str
-    ) -> None:
-        """통합 준비 완료를 알리고 브랜치 정보를 저장한다."""
-        integration_info = {
-            'task_id': task_id,
-            'branch': branch,
-            'worktree_path': worktree_path,
-            'status': 'ready_for_integration',
-            'created_at': datetime.now().isoformat(),
-            'instructions': (
-                f"통합하려면 다음을 실행하세요:\n"
-                f"  cd <타겟-프로젝트>\n"
-                f"  git merge {branch}\n"
-                f"또는 GitHub PR을 생성하세요."
-            )
-        }
-
-        atomic_write(task_dir / 'integration-info.json', integration_info)
-
-        msg = (
-            f"구현 완료! 브랜치: {branch}\n"
-            f"git merge {branch} 로 통합하세요."
-        )
-        self.notifier.notify_stage_completed(msg)
-        self.logger.info(
-            f"통합 정보 저장: {task_dir / 'integration-info.json'}"
-        )
 
     # ── 유틸리티 ──────────────────────────────────────────────
 
