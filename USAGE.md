@@ -33,18 +33,19 @@
     |               → 프로젝트 구조, 기술 스택, 핵심 모듈 분석
     |               → .project-profile.json 캐싱 (commit SHA 기반)
     |               → 기획서 관련 모듈만 컨텍스트 생성
+    |               → project-context.md 파일로 저장 (에이전트가 Read로 참조)
     v
-[Phase 1] Architect: 기획서 + 프로젝트 컨텍스트 → N개 구현 설계
+[Phase 1] Architect: 기획서 + 프로젝트 컨텍스트 파일 참조 → N개 구현 설계
     |
     v
 [Checkpoint] 사용자 검토 + 승인/수정/중단
     |
     v
 [Phase 2] Implementer x N: 각 설계를 독립 git worktree에서 구현 (병렬)
-    |                        + 프로젝트 컨텍스트 제공 (탐색 시간 단축)
+    |                        + 프로젝트 컨텍스트 파일 참조 (토큰 절감)
     v
 [Phase 3] Reviewer + Tester x N: 각 구현을 리뷰/테스트 (병렬)
-    |
+    |       → enable_review / enable_test로 개별 ON/OFF 가능
     v                              (N=1이면 건너뜀)
 [Phase 4] Comparator: N개 구현 비교 + 순위 매기기
     |
@@ -58,7 +59,8 @@
 - **N>=2**: 병렬 구현 + 비교 평가. Phase 4까지 실행 후 평가 결과 저장
 - **git worktree 격리**: 각 구현이 독립 브랜치에서 실행되어 서로 간섭 없음
 - **체크포인트**: Phase 1 후 사용자 검토 기회 제공. 개별 approach 승인/반려 가능
-- **평가 후 종료**: 평가 결과만 제공, merge는 사용자가 수동으로 진행
+- **Phase 3 개별 제어**: `enable_review`, `enable_test`로 리뷰와 테스트를 각각 ON/OFF
+- **토큰 최적화**: 프로젝트 컨텍스트를 파일로 저장하고 에이전트가 Read 도구로 참조 (프롬프트 크기 절감)
 - **시스템 알림**: macOS/Linux/Windows 네이티브 알림 지원
 
 ---
@@ -73,54 +75,30 @@
 
 ### 방법 1: pip install (권장)
 
-프로젝트를 패키지로 설치합니다. `multi-agent-dev` 명령이 시스템에 등록됩니다.
-
 ```bash
 cd /path/to/multi-agent-dev-system
 
-# 일반 설치
-pip3 install .
-
 # 개발 모드 (코드 수정 시 재설치 불필요)
 pip3 install -e .
-
-# 개발 의존성 포함 (pytest, black 등)
-pip3 install -e ".[dev]"
 ```
 
 설치 후 어디서든 `multi-agent-dev` 명령으로 실행할 수 있습니다:
 ```bash
 multi-agent-dev init
 multi-agent-dev run -s planning-spec.md
-multi-agent-dev status
+multi-agent-dev watch
 ```
 
-> **참고**: 이 문서의 예제는 `python3 cli.py` 방식을 기준으로 작성되었습니다. `pip install` 후 `multi-agent-dev` 명령을 사용하려면 `python3 cli.py`를 `multi-agent-dev`로 바꾸면 됩니다.
+> **참고**: 이 문서의 예제는 `python3 cli.py` 방식을 기준으로 작성되었습니다. `pip install` 후에는 `python3 cli.py`를 `multi-agent-dev`로 바꾸면 됩니다.
 
 ### 방법 2: 직접 실행 (설치 없이)
 
-의존성만 설치하고 `python3 cli.py`로 직접 실행합니다.
-
 ```bash
 cd /path/to/multi-agent-dev-system
-
-# 의존성 설치
 pip3 install -r requirements.txt
 ```
 
-이후 프로젝트 디렉토리에서 `python3 cli.py`로 실행합니다:
-```bash
-python3 cli.py init
-python3 cli.py run -s planning-spec.md
-python3 cli.py status
-```
-
-### 의존성 목록
-
-| 패키지 | 버전 | 용도 |
-|--------|------|------|
-| `pyyaml` | >=6.0 | config.yaml 파싱 |
-| `watchdog` | >=3.0.0 | 디렉토리 감시 (watch 모드) |
+이후 프로젝트 디렉토리에서 `python3 cli.py`로 실행합니다.
 
 ### 초기화
 
@@ -147,12 +125,19 @@ prompts:
   directory: ./prompts             # 에이전트 프롬프트 파일 디렉토리
 
 execution:
-  timeout: 300                     # Claude 실행 타임아웃 (초)
+  timeout: 600                     # Claude 실행 타임아웃 (초)
   max_retries: 3                   # 실패 시 재시도 횟수
 
 pipeline:
   checkpoint_phase1: true          # Phase 1 후 체크포인트 활성화
   num_approaches: 1                # 기본 구현 개수 (기획서에서 N 지정 시 덮어씀)
+  enable_review: true              # Phase 3: Review 활성화
+  enable_test: true                # Phase 3: Test 활성화
+
+watch:
+  dirs:                            # 감시할 디렉토리 목록 (완전한 경로)
+    - ./workspace/planning/completed
+    # - /other/project/planning/completed  # 여러 경로 추가 가능
 
 validation:
   enabled: true                    # 기획서 유효성 검증 활성화
@@ -164,18 +149,21 @@ notifications:
   sound: true                      # 알림 사운드 활성화
 ```
 
-> **주의**: `config.yaml`에는 GitHub 토큰 등 민감 정보가 포함될 수 있어 `.gitignore`에 등록되어 있습니다. 절대 커밋하지 마세요.
+> **주의**: `config.yaml`에는 GitHub 토큰 등 민감 정보가 포함될 수 있어 `.gitignore`에 등록되어 있습니다.
 
 ### 설정 항목 설명
 
 | 항목 | 설명 | 기본값 |
 |------|------|--------|
-| `project.target_repo` | 구현 대상 프로젝트의 Git URL. 시스템이 이 저장소를 clone한 후 worktree를 생성 | (빈 문자열, 필수 설정) |
-| `project.github_token` | GitHub Personal Access Token. private repo 접근 시 필수. `https://<token>@github.com/...` 형태로 자동 변환됨 | (빈 문자열) |
+| `project.target_repo` | 구현 대상 프로젝트의 Git URL | (필수 설정) |
+| `project.github_token` | GitHub PAT. private repo 접근 시 필수 | (빈 문자열) |
 | `pipeline.num_approaches` | 기획서에서 N을 명시하지 않았을 때 사용하는 기본 구현 개수 | 1 |
 | `pipeline.checkpoint_phase1` | `false`로 설정하면 Phase 1 후 승인 없이 바로 Phase 2로 진행 | true |
-| `validation.strict_mode` | `true`로 설정하면 "기술 스택 미명시" 같은 경고도 검증 실패로 처리 | false |
-| `validation.auto_revalidate` | `watch` 모드에서 이미 처리한 기획서가 수정되면 자동으로 재실행 | true |
+| `pipeline.enable_review` | `false`로 설정하면 Phase 3에서 리뷰를 건너뜀 | true |
+| `pipeline.enable_test` | `false`로 설정하면 Phase 3에서 테스트를 건너뜀 | true |
+| `watch.dirs` | 감시 모드에서 모니터링할 디렉토리 경로 목록 | `[./workspace/planning/completed]` |
+| `validation.strict_mode` | `true`면 경고도 검증 실패로 처리 | false |
+| `validation.auto_revalidate` | watch 모드에서 기존 기획서 수정 시 자동 재실행 | true |
 
 ### GitHub 토큰 설정 방법
 
@@ -184,15 +172,7 @@ private 저장소를 사용하려면 GitHub Personal Access Token이 필요합�
 1. GitHub > Settings > Developer settings > Personal access tokens > Tokens (classic)
 2. **Generate new token** 클릭
 3. 권한: `repo` (Full control of private repositories) 선택
-4. 생성된 토큰을 `config.yaml`에 입력:
-
-```yaml
-project:
-  target_repo: "https://github.com/your-org/your-private-repo.git"
-  github_token: "ghp_xxxxxxxxxxxxxxxxxxxx"
-```
-
-토큰이 설정되면 clone/fetch 시 자동으로 인증됩니다.
+4. 생성된 토큰을 `config.yaml`에 입력
 
 ---
 
@@ -204,7 +184,7 @@ project:
 
 1. **최소 50자** 이상
 2. **`## 구현 방법`** 섹션이 반드시 존재해야 함
-3. 기술 스택을 명시하는 것을 권장 (React, Python, FastAPI 등)
+3. 기술 스택을 명시하는 것을 권장
 
 ### 기본 형식
 
@@ -258,8 +238,6 @@ project:
 - H1 제목 없음
 - 기술 스택 미명시
 
-검증 실패 시 `validation-errors.md` 파일이 task 디렉토리에 생성됩니다.
-
 ---
 
 ## 5. 파이프라인 실행
@@ -286,13 +264,14 @@ python3 cli.py run -s planning-spec.md -c my-config.yaml
 
 1. 기획서 검증 → 파싱 → Git clone/fetch
 2. **프로젝트 분석**: 타겟 프로젝트 구조 자동 분석 (~1-2초)
-   - `.project-profile.json` 캐시 확인 (있으면 재사용, 없으면 생성)
+   - `.project-profile.json` 캐시 확인 (있으면 재사용)
    - 기획서 키워드와 관련된 모듈만 컨텍스트 생성
-3. Phase 1 (Architect) 실행 - 프로젝트 컨텍스트 활용으로 탐색 시간 단축
-4. **체크포인트**: 터미널에 "승인 대기 중" 메시지 출력, 시스템 알림 발생
+   - `project-context.md` 파일로 저장 (에이전트가 Read 도구로 참조)
+3. Phase 1 (Architect) 실행
+4. **체크포인트**: 터미널에 "승인 대기 중" 메시지 출력
 5. 다른 터미널에서 `approve` 명령 실행
-6. Phase 2~6 자동 진행 - Implementer도 프로젝트 컨텍스트 활용
-7. 완료 시 통합 브랜치 정보 출력
+6. Phase 2~4 자동 진행
+7. `evaluation-result.md` 생성, 사용자가 원하는 브랜치를 수동 머지
 
 ---
 
@@ -320,25 +299,11 @@ python3 cli.py run -s <기획서경로> [-c config.yaml] [-v]
 | `-c, --config` | 설정 파일 경로 (기본: config.yaml) |
 | `-v, --verbose` | 상세 로깅 (DEBUG 레벨) |
 
-**출력 예시** (성공):
-```
-기획서: /path/to/planning-spec.md
-============================================================
-파이프라인을 시작합니다...
-
-============================================================
-[SUCCESS] 파이프라인 완료!
-  태스크 ID: task-20250211-153000
-  브랜치:    task-20250211-153000/impl-1
-
-통합하려면: git merge task-20250211-153000/impl-1
-```
-
 ---
 
 ### `approve` — 체크포인트 승인
 
-**⚠️ 새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
+**새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
 
 ```bash
 # 전체 승인
@@ -349,9 +314,6 @@ python3 cli.py approve <task-id> --approaches 1,2
 
 # 특정 approach 반려 (N>=2)
 python3 cli.py approve <task-id> --reject 3
-
-# 조합 사용
-python3 cli.py approve <task-id> --approaches 1,2 --reject 3
 ```
 
 | 옵션 | 설명 |
@@ -359,38 +321,19 @@ python3 cli.py approve <task-id> --approaches 1,2 --reject 3
 | `--approaches` | 승인할 approach ID 목록 (쉼표 구분) |
 | `--reject` | 반려할 approach ID 목록 (쉼표 구분) |
 
-**동작**:
-- 옵션 없이 `approve`하면 모든 approach가 승인됩니다
-- `--approaches`를 지정하면 해당 approach만 Phase 2로 진행
-- `--reject`로 지정된 approach는 Phase 2에서 제외
-- 승인된 approach가 0개면 파이프라인이 중단됩니다
-
 ---
 
-### `select` — 구현 선택 (Phase 5, N>=2)
-
-**⚠️ 새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
+### `select` — 구현 선택 (N>=2)
 
 ```bash
 python3 cli.py select <task-id> <impl-id>
 ```
 
-Phase 4(Comparator)가 완료된 후, 사용자가 최종 구현을 선택하는 명령입니다.
-
-**예시**:
-```bash
-# comparison.md 확인 후
-python3 cli.py select task-20250211-153000 2
-# → [SELECTED] task-20250211-153000: impl-2 선택 완료
-```
-
-`human-review.json`에 추천 구현 정보가 저장되어 있으니 참고하세요.
+파이프라인 완료 후, 사용자가 최종 구현을 선택하는 명령입니다.
 
 ---
 
 ### `revise` — 수정 요청
-
-**⚠️ 새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
 
 ```bash
 # 피드백과 함께
@@ -398,23 +341,17 @@ python3 cli.py revise <task-id> --feedback "API 설계를 변경해주세요"
 
 # 대화형 입력
 python3 cli.py revise <task-id>
-# → 수정 피드백을 입력하세요 (빈 줄로 종료):
 ```
 
 Phase 1 체크포인트에서 Architect의 설계에 수정이 필요할 때 사용합니다.
-파이프라인이 중단되고, 피드백이 결과에 포함됩니다.
 
 ---
 
 ### `abort` — 태스크 중단
 
-**⚠️ 새로운 터미널에서 실행** (파이프라인 실행 터미널은 대기 중)
-
 ```bash
 python3 cli.py abort <task-id>
 ```
-
-실행 중인 파이프라인을 즉시 중단합니다.
 
 ---
 
@@ -428,32 +365,6 @@ python3 cli.py status
 python3 cli.py status <task-id>
 ```
 
-**상세 출력 예시** (N>=2):
-```
-태스크: task-20250211-153000
-상태:   phase3_review_test
-생성:   2025-02-11T15:30:00
-갱신:   2025-02-11T15:35:20
-기획서: /path/to/planning-spec.md
-
-Phase 상태:
-  phase1: completed
-  phase2: completed
-  phase3: completed
-  phase4: completed
-
-구현 목록:
-  impl-1: [OK] task-20250211-153000/impl-1
-  impl-2: [OK] task-20250211-153000/impl-2
-  impl-3: [FAIL] task-20250211-153000/impl-3
-
-Rankings: [2, 1, 3]
-비교 보고서: ./workspace/tasks/task-20250211-153000/comparator/comparison.md
-
-추천 구현: impl-2
-선택하려면: python3 cli.py select task-20250211-153000 <impl-id>
-```
-
 ---
 
 ### `watch` — 감시 모드
@@ -462,10 +373,33 @@ Rankings: [2, 1, 3]
 python3 cli.py watch [-c config.yaml]
 ```
 
-`workspace/planning/completed/` 디렉토리를 5초 간격으로 감시합니다.
+`config.yaml`의 `watch.dirs`에 지정된 디렉토리들을 5초 간격으로 감시합니다.
 
+**다중 경로 지원**:
+- `watch.dirs`에 여러 경로를 지정할 수 있습니다
+- 경로가 2개 이상이면 시작 시 **화살표 키 기반 대화형 UI**로 감시할 디렉토리를 선택합니다
+- 경로가 1개면 선택 없이 바로 감시를 시작합니다
+
+**대화형 선택 UI** (경로 2개 이상):
+```
+  감시할 디렉토리를 선택하세요
+  (위/아래: 이동, Space: 선택/해제, Enter: 확정)
+
+  > [*] /Users/.../workspace/planning/completed
+    [ ] /Users/.../other-project/planning/completed (자동 생성)
+
+  1개 선택됨
+```
+
+**watch.dirs 미설정 시**:
+- config에 `watch.dirs`가 없으면 안내 메시지를 출력합니다
+- `workspace.root`가 설정되어 있으면 기본 경로(`{root}/planning/completed`)를 제안합니다
+- 사용자가 Y를 입력하면 해당 경로로 감시를 시작합니다
+
+**동작**:
 - 새 `planning-spec.md` 파일이 감지되면 자동으로 파이프라인 실행
 - `auto_revalidate: true`이면 기존 기획서가 수정될 때도 재실행
+- 순차 처리: 현재 작업이 끝나야 다음 기획서를 처리
 - `Ctrl+C`로 종료
 
 ---
@@ -476,51 +410,44 @@ python3 cli.py watch [-c config.yaml]
 
 ```
 기획서 검증 → 파싱 → Git clone/fetch → 프로젝트 분석
-    → Phase 1: Architect (구현 설계, 프로젝트 컨텍스트 활용)
+    → Phase 1: Architect (구현 설계, 프로젝트 컨텍스트 파일 참조)
     → [Checkpoint: 승인 대기]
-    → Phase 2: Implementer 1개 (순차 실행, 프로젝트 컨텍스트 활용)
-    → Phase 3: Reviewer + Tester 1세트 (순차 실행)
-    → Phase 6: 통합 알림 (브랜치 정보)
+    → Phase 2: Implementer 1개 (프로젝트 컨텍스트 파일 참조)
+    → Phase 3: Reviewer + Tester (enable_review / enable_test로 개별 ON/OFF)
+    → evaluation-result.md 생성
 ```
 
-- Phase 4 (Comparator), Phase 5 (Selection) **건너뜀**
+- Phase 4 (Comparator) **건너뜀**
 - 유일한 성공 구현이 자동으로 선택됨
 
 ### N>=2 (복수 구현)
 
 ```
 기획서 검증 → 파싱 → Git clone/fetch → 프로젝트 분석
-    → Phase 1: Architect (N개 구현 설계, 프로젝트 컨텍스트 활용)
+    → Phase 1: Architect (N개 구현 설계, 프로젝트 컨텍스트 파일 참조)
     → [Checkpoint: 승인/개별승인/수정/중단 대기]
-    → Phase 2: Implementer N개 (ThreadPoolExecutor 병렬, 프로젝트 컨텍스트 활용)
-    → Phase 3: Reviewer + Tester N세트 (ThreadPoolExecutor 병렬)
+    → Phase 2: Implementer N개 (ThreadPoolExecutor 병렬, 프로젝트 컨텍스트 파일 참조)
+    → Phase 3: Reviewer + Tester N세트 (ThreadPoolExecutor 병렬, 개별 ON/OFF)
     → Phase 4: Comparator (N개 비교, 순위 매기기)
-    → Phase 5: Human Selection (사용자가 select 명령으로 선택)
-    → Phase 6: 통합 알림 (선택된 브랜치 정보)
+    → evaluation-result.md 생성
 ```
 
 ### 프로젝트 사전 분석 (Project Analysis)
 
 Git clone 후, Phase 1 전에 자동으로 실행됩니다:
 
-**목적**: Claude가 대규모 프로젝트를 처음부터 탐색하는 시간을 대폭 단축
-
 **동작 방식**:
 1. **프로젝트 타입 감지**: Gradle, Maven, npm, Python 등
-2. **모듈 구조 분석**: 각 모듈의 소스 루트, 주요 클래스(Entity, Repository, Service 등) 스캔
+2. **모듈 구조 분석**: 각 모듈의 소스 루트, 주요 클래스 스캔
 3. **아키텍처 패턴 감지**: 헥사고날, 레이어드 등
 4. **프로필 캐싱**: `.project-profile.json` 파일로 커밋 SHA 기반 캐싱
-   - 같은 커밋이면 재사용, 변경되면 증분 업데이트
 5. **타겟 컨텍스트 생성**: 기획서 키워드와 매칭되는 모듈만 컨텍스트 추출
+6. **파일로 저장**: `project-context.md`로 저장 → 에이전트가 Read 도구로 참조 (프롬프트에 직접 삽입하지 않음)
 
-**2-tier 컨텍스트 구조**:
-- **정적 프로필** (캐시됨): 프로젝트 전체 개요, 모듈 목록, 기술 스택
-- **동적 타겟 컨텍스트** (매번 생성): 기획서 관련 모듈의 실제 코드
-
-**성능 개선**:
-- Architect: ~252s → ~60-90s 예상
-- Implementer: ~300s+ → ~120-180s 예상
-- **AI 비용 절감**: Python 기반 분석은 무료, Claude는 필요한 부분만 탐색
+**토큰 최적화**:
+- 기존: 프로젝트 컨텍스트(~14,000자)를 Architect/Implementer 프롬프트에 직접 삽입
+- 현재: 파일 경로만 프롬프트에 포함, 에이전트가 필요 시 Read로 참조
+- N=2일 때 약 ~10,500 토큰 절감
 
 ### 각 Phase에서 생성되는 파일
 
@@ -529,105 +456,31 @@ workspace/tasks/task-YYYYMMDD-HHMMSS/
 ├── planning-spec.md         # 기획서 복사본
 ├── manifest.json            # 태스크 메타데이터 + 단계별 상태
 ├── timeline.log             # 이벤트 타임라인 로그
-├── full-conversation.txt    # 🆕 전체 대화 내역 (모든 Phase 통합, 시간순)
-├── checkpoint-decision.json # Phase 1 체크포인트 결정 (임시, 처리 후 삭제)
-├── validation-errors.md     # 검증 실패 시 오류 보고서
+├── full-conversation.txt    # 전체 대화 내역 (모든 Phase 통합, 시간순)
 ├── project-profile.json     # 프로젝트 분석 결과 (디버깅용 복사본)
+├── project-context.md       # 프로젝트 컨텍스트 (에이전트 참조)
+├── checkpoint-decision.json # Phase 1 체크포인트 결정 (임시)
+├── evaluation-result.md     # 최종 평가 결과
 │
 ├── architect/               # Phase 1 출력
-│   ├── (Architect 결과물)
-│   └── conversation.txt     # Architect-Claude 대화 내역 (분석용)
+│   ├── approaches.json
+│   └── conversation.txt
 │
 ├── implementations/
 │   ├── impl-1/              # Phase 2: git worktree (독립 브랜치)
-│   │   └── conversation.txt # Implementer 1 대화 내역 (분석용)
-│   ├── impl-2/              # Phase 2: git worktree (독립 브랜치)
-│   │   └── conversation.txt # Implementer 2 대화 내역 (분석용)
-│   └── impl-3/              # Phase 2: git worktree (독립 브랜치)
-│       └── conversation.txt # Implementer 3 대화 내역 (분석용)
+│   │   └── conversation.txt
+│   └── impl-2/
+│       └── conversation.txt
 │
 ├── review-1/                # Phase 3: impl-1 리뷰 결과
-│   └── conversation.txt     # Reviewer 1 대화 내역 (분석용)
-├── review-2/                # Phase 3: impl-2 리뷰 결과
-│   └── conversation.txt     # Reviewer 2 대화 내역 (분석용)
+│   └── conversation.txt
 ├── test-1/                  # Phase 3: impl-1 테스트 결과
-│   └── conversation.txt     # Tester 1 대화 내역 (분석용)
-├── test-2/                  # Phase 3: impl-2 테스트 결과
-│   └── conversation.txt     # Tester 2 대화 내역 (분석용)
+│   └── conversation.txt
 │
-├── comparator/              # Phase 4 출력 (N>=2)
-│   ├── comparison.md        #   비교 보고서
-│   ├── rankings.json        #   순위 데이터
-│   └── conversation.txt     # Comparator 대화 내역 (분석용)
-│
-├── human-review.json        # Phase 5: 사용자 선택 요청 (추천 정보 포함)
-├── selection-decision.json  # Phase 5: 사용자의 선택 결과
-│
-└── integration-info.json    # Phase 6: 통합 브랜치 정보
-```
-
-**대화 내역 (conversation.txt, full-conversation.txt)**:
-
-각 Phase에서 Claude Code와 주고받은 대화 내역이 자동으로 저장됩니다.
-
-**1. 각 Phase별 대화 내역** (`conversation.txt`):
-- 위치: 각 Phase 디렉토리 내부 (architect/, implementations/impl-1/, review-1/ 등)
-- 용도: 특정 Phase의 대화만 확인
-- 포맷:
-  ```
-  === CONVERSATION TRANSCRIPT ===
-  Generated at: 2025-02-11T15:30:45
-
-  === PROMPT ===
-  (에이전트에게 전달된 전체 프롬프트)
-
-  === CLAUDE OUTPUT ===
-  (Claude의 전체 응답)
-
-  === EXECUTION METADATA ===
-  Working Directory: /path/to/workspace
-  Success: True
-  Duration: 120.45s
-  ```
-
-**2. 전체 대화 내역** (`full-conversation.txt`):
-- 위치: `workspace/tasks/task-YYYYMMDD-HHMMSS/full-conversation.txt`
-- 용도: 모든 Phase의 대화를 시간순으로 한눈에 확인
-- 포맷:
-  ```
-  ===== TASK: task-20250211-153045 =====
-  ===== PHASE 1: ARCHITECT =====
-  Timestamp: 2025-02-11T15:30:45
-  Duration: 120.45s
-  Success: True
-
-  === PROMPT ===
-  (프롬프트)
-
-  === CLAUDE OUTPUT ===
-  (응답)
-
-  ========================================
-
-  ===== PHASE 2: IMPLEMENTER 1 =====
-  Timestamp: 2025-02-11T15:35:20
-  ...
-  ```
-
-**공통 특징**:
-- ✅ **추가 토큰 비용: 0원** (저장만, 다음 Phase에 전달 안 함)
-- ✅ **성공/실패 모두 저장** (디버깅에 유용)
-- ✅ **자동 저장** (별도 설정 불필요)
-- ✅ **프롬프트 분석 용이** (추후 프롬프트 개선에 활용)
-
-**프로젝트 캐시 구조** (Git clone 캐시):
-
-```
-workspace/.cache/
-└── <project-name>/              # 타겟 프로젝트 clone (공유)
-    ├── .git/
-    ├── .project-profile.json    # 프로젝트 분석 캐시 (commit SHA 기반)
-    └── (소스 파일들)
+└── comparator/              # Phase 4 출력 (N>=2)
+    ├── comparison.md
+    ├── rankings.json
+    └── conversation.txt
 ```
 
 ### Git worktree 구조
@@ -645,11 +498,6 @@ workspace/tasks/task-XXX/implementations/
 └── impl-3/                  # worktree → branch: task-XXX/impl-3
 ```
 
-- 모든 구현이 **같은 원본 코드**에서 시작
-- 각 구현은 **독립 브랜치**에서 작업
-- 구현 간 **간섭 없음**
-- 선택 후 `git merge <branch>` 로 통합
-
 ---
 
 ## 8. 프로젝트 구조
@@ -664,7 +512,7 @@ multi-agent-dev-system/
 ├── orchestrator/                  # 핵심 오케스트레이터
 │   ├── main.py                    #   Orchestrator 클래스 (파이프라인 전체 관리)
 │   ├── executor.py                #   ClaudeExecutor (Claude Code 실행기)
-│   ├── watcher.py                 #   DirectoryWatcher + FileWaitHelper
+│   ├── watcher.py                 #   FileWaitHelper (파일 대기 헬퍼)
 │   ├── agents/                    #   AI 에이전트들
 │   │   ├── base.py                #     BaseAgent (공통 기반)
 │   │   ├── architect.py           #     Phase 1: 구현 설계
@@ -682,16 +530,15 @@ multi-agent-dev-system/
 │       └── spec_validator.py      #     기획서 검증 (규칙 기반)
 │
 ├── prompts/                       # 에이전트 프롬프트 템플릿
-│   ├── architect.md               #   Architect 프롬프트
-│   ├── implementer.md             #   Implementer 프롬프트
-│   ├── reviewer.md                #   Reviewer 프롬프트
-│   ├── tester.md                  #   Tester 프롬프트
-│   └── comparator.md              #   Comparator 프롬프트
+│   ├── architect.md
+│   ├── implementer.md
+│   ├── reviewer.md
+│   ├── tester.md
+│   └── comparator.md
 │
 └── workspace/                     # 런타임 워크스페이스
-    ├── planning/
-    │   ├── in-progress/           #   기획 작성 중
-    │   └── completed/             #   완성된 기획서 (watch 모드 감지 대상)
+    ├── templates/
+    │   └── planning-template.md   #   기획서 작성 템플릿
     ├── tasks/                     #   실행 중/완료된 태스크
     └── .cache/                    #   Git clone 캐시
 ```
@@ -707,13 +554,13 @@ multi-agent-dev-system/
 python3 cli.py run -s my-spec.md
 # → Phase 1 완료, 체크포인트 대기
 
-# 2. 새로운 터미널을 열어서 승인 (기존 터미널은 대기 중이므로)
+# 2. 새로운 터미널에서 승인
 python3 cli.py approve task-20250211-153000
 
 # 3. Phase 2~3 자동 진행 후 평가 결과 저장
-# → workspace/tasks/task-20250211-153000/evaluation-result.md 확인
+cat workspace/tasks/task-20250211-153000/evaluation-result.md
 
-# 4. 원하면 구현을 타겟 프로젝트에 수동으로 머지
+# 4. 원하면 타겟 프로젝트에 수동 머지
 cd <타겟-프로젝트>
 git merge task-20250211-153000/impl-1
 ```
@@ -724,56 +571,61 @@ git merge task-20250211-153000/impl-1
 # 1. 기획서에 "### 방법 1", "### 방법 2" 작성 후 실행
 python3 cli.py run -s auth-spec.md
 
-# 2. Phase 1 후 체크포인트 — 새 터미널에서 2개 모두 승인
+# 2. Phase 1 후 체크포인트 — 새 터미널에서 승인
 python3 cli.py approve task-20250211-160000
 
-# 3. Phase 2(병렬 구현) → Phase 3(병렬 리뷰+테스트) → Phase 4(비교) 자동 진행 후 완료
+# 3. Phase 2(병렬 구현) → Phase 3(병렬 리뷰+테스트) → Phase 4(비교) → 완료
 
 # 4. 평가 결과 확인
 cat workspace/tasks/task-20250211-160000/evaluation-result.md
-# → Rankings: [2, 1]
-# → 추천 구현: impl-2
-
 cat workspace/tasks/task-20250211-160000/comparator/comparison.md
 
-# 5. 원하는 구현을 타겟 프로젝트에 수동으로 머지
+# 5. 원하는 브랜치 머지
 cd <타겟-프로젝트>
-git merge task-20250211-160000/impl-2  # 추천된 impl-2 선택
+git merge task-20250211-160000/impl-2
 ```
 
-### 시나리오 C: 3개 중 1개 반려 (N=3, 개별 승인)
+### 시나리오 C: 리뷰/테스트 없이 빠르게 실행
+
+```yaml
+# config.yaml
+pipeline:
+  enable_review: false
+  enable_test: false
+```
 
 ```bash
-# 1. 기획서에 3개 방법 작성 후 실행
-python3 cli.py run -s complex-spec.md
-
-# 2. Phase 1 후 — 새 터미널에서 방법 3이 마음에 들지 않으면
-python3 cli.py approve task-20250211-170000 --approaches 1,2 --reject 3
-# → 방법 1, 2만 Phase 2로 진행 (방법 3은 제외)
-
-# 3. 이후 2개 구현에 대해 Phase 2~4 진행 후 평가 결과 확인
-cat workspace/tasks/task-20250211-170000/evaluation-result.md
-
-# 4. 원하는 구현 선택하여 머지
-cd <타겟-프로젝트>
-git merge task-20250211-170000/impl-1  # impl-1 선택
+python3 cli.py run -s quick-spec.md
+# → Phase 1 → Checkpoint → Phase 2 → 완료 (Phase 3 건너뜀)
 ```
 
-### 시나리오 D: watch 모드로 자동 실행
+### 시나리오 D: watch 모드로 자동 실행 (다중 경로)
+
+```yaml
+# config.yaml
+watch:
+  dirs:
+    - ./workspace/planning/completed
+    - /home/user/another-project/planning/completed
+```
 
 ```bash
 # 1. watch 모드 시작
 python3 cli.py watch
 
-# 2. 다른 터미널에서 기획서를 completed 디렉토리에 배치
+# 2. 경로가 2개 이상이면 대화형 UI로 선택
+#    감시할 디렉토리를 선택하세요
+#    (위/아래: 이동, Space: 선택/해제, Enter: 확정)
+#
+#    > [*] /Users/.../workspace/planning/completed
+#      [ ] /home/user/another-project/planning/completed
+#
+#    1개 선택됨
+
+# 3. 다른 터미널에서 기획서를 completed 디렉토리에 배치
 cp my-spec.md workspace/planning/completed/my-feature/planning-spec.md
 
-# 3. 5초 내 자동 감지 → 파이프라인 실행
-# → 새 기획서 감지: .../planning-spec.md
-# → 파이프라인을 시작합니다...
-
-# auto_revalidate가 true이면:
-# 기획서를 수정하면 자동으로 재검증/재실행
+# 4. 5초 내 자동 감지 → 파이프라인 실행
 ```
 
 ---
@@ -781,8 +633,6 @@ cp my-spec.md workspace/planning/completed/my-feature/planning-spec.md
 ## 10. 트러블슈팅
 
 ### "기획서 검증 실패"
-
-**원인**: 기획서가 검증 규칙을 통과하지 못함
 
 **해결**:
 1. `validation-errors.md` 확인
@@ -794,93 +644,47 @@ cp my-spec.md workspace/planning/completed/my-feature/planning-spec.md
 ### "target_repo가 설정되지 않았습니다"
 
 **해결**: `config.yaml`의 `project.target_repo`에 Git URL 설정
-```yaml
-project:
-  target_repo: "https://github.com/your-org/your-project"
-```
 
-### Git clone 시 인증 실패 (Authentication failed / 403)
+### Git clone 시 인증 실패
 
-**원인**: private 저장소에 토큰 없이 접근하려고 함
-
-**해결**: `config.yaml`에 GitHub 토큰 설정
-```yaml
-project:
-  target_repo: "https://github.com/your-org/your-private-repo.git"
-  github_token: "ghp_xxxxxxxxxxxxxxxxxxxx"
-```
-
-토큰이 만료되었거나 권한이 부족할 수도 있습니다. `repo` 권한이 있는지 확인하세요.
+**해결**: `config.yaml`에 GitHub 토큰 설정. `repo` 권한이 있는지 확인
 
 ### "Claude Code CLI not found"
 
-**원인**: `claude` 명령이 PATH에 없음
-
-**해결**: Claude Code CLI를 설치하고 `claude` 명령이 실행되는지 확인
-```bash
-claude --version
-```
+**해결**: `claude --version`으로 CLI가 PATH에 있는지 확인
 
 ### 체크포인트에서 무한 대기
 
-**원인**: `approve`/`revise`/`abort` 명령을 아직 실행하지 않음
-
-**해결**: 새로운 터미널을 열어서 명령 실행 (파이프라인 실행 터미널은 대기 중이므로)
+**해결**: 새로운 터미널을 열어서 명령 실행
 ```bash
 python3 cli.py approve <task-id>
 # 또는
 python3 cli.py abort <task-id>
 ```
 
-기본 타임아웃은 1시간(3600초)입니다.
+### watch 모드에서 "config에 watch.dirs가 설정되지 않았습니다"
 
-### Phase 5에서 무한 대기 (N>=2)
-
-**원인**: `select` 명령을 아직 실행하지 않음
-
-**해결**: 새로운 터미널에서 명령 실행
-```bash
-# 추천 확인
-python3 cli.py status <task-id>
-
-# 선택
-python3 cli.py select <task-id> <impl-id>
+**해결**: config.yaml에 `watch.dirs` 섹션을 추가하세요
+```yaml
+watch:
+  dirs:
+    - ./workspace/planning/completed
 ```
-
-### 모든 구현이 실패
-
-**원인**: 기획서가 모호하거나, 타겟 프로젝트 코드에 문제가 있음
-
-**해결**:
-1. 각 worktree 디렉토리에서 에러 로그 확인
-2. 기획서를 더 구체적으로 수정
-3. `timeline.log`에서 실패 지점 확인
+또는 프롬프트에서 기본 경로 사용 여부를 묻는 메시지가 표시되면 Y를 입력하세요.
 
 ### 프로젝트 분석이 느리거나 실패
 
-**원인**: 대규모 프로젝트 또는 비표준 구조
+**해결**:
+1. 캐시 파일 삭제 후 재실행: `rm workspace/.cache/<project-name>/.project-profile.json`
+2. 지원 프로젝트 타입: Gradle, Maven, npm, Python
+
+### Architect/Implementer가 프로젝트 탐색 시간이 긴 경우
 
 **해결**:
-1. `workspace/.cache/<project-name>/.project-profile.json` 확인
-   - 파일이 생성되지 않았으면 프로젝트 타입 감지 실패
-2. 지원 프로젝트 타입: Gradle, Maven, npm (package.json), Python (setup.py/pyproject.toml)
-3. 커스텀 프로젝트 구조는 아직 지원하지 않을 수 있음
-4. 캐시 파일 삭제 후 재실행: `rm workspace/.cache/<project-name>/.project-profile.json`
-
-### Architect/Implementer가 여전히 프로젝트를 탐색하는 시간이 김
-
-**원인**:
-- 프로젝트 프로필이 캐시되지 않았거나
-- 기획서 키워드가 너무 광범위하여 많은 모듈이 포함됨
-
-**해결**:
-1. 프로필 캐시 확인: `workspace/tasks/<task-id>/project-profile.json` 파일 확인
-2. 기획서에 구체적인 모듈명/패키지명 명시
-   - 예: "module-admin의 로그인 기능" (명확)
-   - 나쁜 예: "시스템의 인증" (모호, 모든 모듈 포함될 수 있음)
-3. 타겟 컨텍스트 크기 확인 (로그에 "컨텍스트 N자" 출력)
+1. 기획서에 구체적인 모듈명/패키지명 명시 (예: "module-admin의 로그인 기능")
+2. 타겟 컨텍스트 크기 확인 (로그에 "컨텍스트 N자" 출력)
    - 30,000자 이하: 적정
-   - 50,000자 이상: 너무 많은 모듈 포함, 기획서를 더 구체적으로 수정
+   - 50,000자 이상: 기획서를 더 구체적으로 수정
 
 ---
 
@@ -893,10 +697,9 @@ python3 cli.py init                              # config.yaml 생성
 # === 실행 ===
 python3 cli.py run -s spec.md                    # 파이프라인 실행
 python3 cli.py run -s spec.md -v                 # 상세 로깅
-python3 cli.py watch                             # 감시 모드
+python3 cli.py watch                             # 감시 모드 (다중 경로 지원)
 
-# === 체크포인트 (Phase 1 후) ===
-# ⚠️ 새로운 터미널에서 실행 (파이프라인 터미널은 대기 중)
+# === 체크포인트 (Phase 1 후, 새 터미널에서) ===
 python3 cli.py approve <task-id>                 # 전체 승인
 python3 cli.py approve <task-id> --approaches 1,2  # 개별 승인
 python3 cli.py approve <task-id> --reject 3      # 개별 반려
@@ -907,13 +710,13 @@ python3 cli.py abort <task-id>                   # 중단
 python3 cli.py status                            # 전체 목록
 python3 cli.py status <task-id>                  # 상세 상태
 
-# === 평가 결과 확인 (파이프라인 완료 후) ===
-cat workspace/tasks/<task-id>/evaluation-result.md  # 평가 요약
-cat workspace/tasks/<task-id>/comparator/comparison.md  # 상세 비교 (N≥2)
+# === 결과 확인 (파이프라인 완료 후) ===
+cat workspace/tasks/<task-id>/evaluation-result.md
+cat workspace/tasks/<task-id>/comparator/comparison.md  # N≥2
 
 # === 수동 머지 ===
 cd <타겟-프로젝트>
-git merge <task-id>/impl-<N>                      # 원하는 브랜치 병합
+git merge <task-id>/impl-<N>
 ```
 
-> **참고**: `pip3 install -e .` 설치 후에는 `python3 cli.py` 대신 `multi-agent-dev` 명령을 사용할 수 있습니다.
+> `pip3 install -e .` 설치 후에는 `python3 cli.py` 대신 `multi-agent-dev` 명령을 사용할 수 있습니다.
