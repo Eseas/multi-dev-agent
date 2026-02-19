@@ -955,6 +955,9 @@ class Orchestrator:
                 'enable_review': True,
                 'enable_test': True
             },
+            'watch': {
+                'dirs': ['./workspace/planning/completed']
+            },
             'validation': {
                 'enabled': True,
                 'auto_revalidate': True,

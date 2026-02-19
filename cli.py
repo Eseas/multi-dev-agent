@@ -583,10 +583,111 @@ def cmd_status(args):
     return 0
 
 
+def _read_key():
+    """터미널에서 단일 키 입력을 읽는다 (화살표 키 포함)."""
+    import tty
+    import termios
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        if ch == '\x1b':
+            seq = sys.stdin.read(2)
+            if seq == '[A':
+                return 'up'
+            elif seq == '[B':
+                return 'down'
+            return 'esc'
+        elif ch == ' ':
+            return 'space'
+        elif ch in ('\r', '\n'):
+            return 'enter'
+        elif ch == '\x03':
+            return 'ctrl_c'
+        return ch
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _select_watch_dirs(all_dirs: list) -> list:
+    """화살표 키 기반 대화형 UI로 감시할 디렉토리를 선택받는다.
+
+    Args:
+        all_dirs: config에서 읽어온 전체 감시 대상 디렉토리 리스트
+
+    Returns:
+        사용자가 선택한 디렉토리 Path 리스트
+    """
+    resolved = []
+    for d in all_dirs:
+        p = Path(d).resolve()
+        exists = p.exists()
+        resolved.append((p, exists))
+
+    cursor = 0
+    checked = [False] * len(resolved)
+    total = len(resolved)
+
+    def render():
+        # 커서를 맨 위로 이동하여 다시 그리기
+        sys.stdout.write(f'\033[{total + 5}A')  # 위로 이동
+        sys.stdout.write('\033[J')  # 아래 전체 지우기
+
+        print('  감시할 디렉토리를 선택하세요')
+        print(f'  (위/아래: 이동, Space: 선택/해제, Enter: 확정)\n')
+
+        for i, (p, exists) in enumerate(resolved):
+            marker = '[*]' if checked[i] else '[ ]'
+            arrow = '>' if i == cursor else ' '
+            status = ' (자동 생성)' if not exists else ''
+            print(f'  {arrow} {marker} {p}{status}')
+
+        selected_count = sum(checked)
+        print(f'\n  {selected_count}개 선택됨')
+
+    # 초기 출력용 빈 줄 확보
+    for _ in range(total + 5):
+        print()
+
+    render()
+
+    while True:
+        key = _read_key()
+
+        if key == 'ctrl_c':
+            print('\n취소되었습니다.')
+            sys.exit(0)
+        elif key == 'up':
+            cursor = (cursor - 1) % total
+        elif key == 'down':
+            cursor = (cursor + 1) % total
+        elif key == 'space':
+            checked[cursor] = not checked[cursor]
+        elif key == 'enter':
+            selected = [
+                resolved[i][0]
+                for i in range(total) if checked[i]
+            ]
+            if not selected:
+                # 아무것도 선택 안 했으면 무시
+                continue
+            break
+
+        render()
+
+    # 존재하지 않는 디렉토리 자동 생성
+    for d in selected:
+        d.mkdir(parents=True, exist_ok=True)
+
+    return selected
+
+
 def cmd_watch(args):
     """기획서 감시 모드를 실행한다.
 
-    workspace/planning/completed/ 디렉토리를 감시하여
+    config의 watch.dirs에 지정된 디렉토리들을 감시하여
     새로운 기획서가 감지되면 자동으로 파이프라인을 실행한다.
     auto_revalidate가 true면 기존 기획서의 수정도 감지하여 재실행한다.
     """
@@ -598,13 +699,53 @@ def cmd_watch(args):
     with open(args.config) as f:
         config = yaml.safe_load(f)
 
-    workspace_root = Path(config['workspace']['root'])
-    completed_dir = workspace_root / 'planning' / 'completed'
-    completed_dir.mkdir(parents=True, exist_ok=True)
+    # watch.dirs에서 감시 경로 목록 로드
+    watch_dirs = config.get('watch', {}).get('dirs', [])
+    if not watch_dirs:
+        print('config에 watch.dirs가 설정되지 않았습니다.')
+        print()
+        print('config.yaml에 다음을 추가하세요:')
+        print()
+        print('  watch:')
+        print('    dirs:')
+        print('      - /path/to/planning/completed')
+        print('      - /path/to/another/planning/completed')
+        print()
+
+        # 기본 경로 제안
+        workspace_root = config.get('workspace', {}).get('root', '')
+        if workspace_root:
+            default_dir = str(
+                (Path(workspace_root) / 'planning' / 'completed').resolve()
+            )
+            answer = input(
+                f'기본 경로({default_dir})를 사용하시겠습니까? [Y/n]: '
+            ).strip().lower()
+            if answer in ('', 'y', 'yes'):
+                watch_dirs = [default_dir]
+                print(f'기본 경로를 사용합니다: {default_dir}')
+                print()
+            else:
+                return 1
+        else:
+            return 1
+
+    # 디렉토리 선택 시퀀스
+    if len(watch_dirs) == 1:
+        # 단일 경로면 선택 없이 바로 사용
+        selected_dirs = [Path(watch_dirs[0]).resolve()]
+        selected_dirs[0].mkdir(parents=True, exist_ok=True)
+    else:
+        selected_dirs = _select_watch_dirs(watch_dirs)
 
     auto_revalidate = config.get('validation', {}).get('auto_revalidate', False)
 
-    print(f'기획서 감시 중: {completed_dir}')
+    print()
+    print('=== 감시 모드 시작 ===')
+    print()
+    for d in selected_dirs:
+        print(f'  감시 중: {d}')
+    print()
     print('새로운 planning-spec.md 파일을 감지하면 자동으로 실행합니다.')
     if auto_revalidate:
         print('auto_revalidate 활성화: 기존 기획서 수정 시 재실행합니다.')
@@ -615,49 +756,51 @@ def cmd_watch(args):
     # mtime 추적 (auto_revalidate용)
     file_mtimes = {}
 
-    # 기존 파일 등록
-    for existing in completed_dir.rglob('planning-spec.md'):
-        spec_str = str(existing)
-        processed.add(spec_str)
-        file_mtimes[spec_str] = existing.stat().st_mtime
+    # 기존 파일 등록 (모든 감시 디렉토리)
+    for watch_dir in selected_dirs:
+        for existing in watch_dir.rglob('planning-spec.md'):
+            spec_str = str(existing)
+            processed.add(spec_str)
+            file_mtimes[spec_str] = existing.stat().st_mtime
 
     try:
         while True:
-            for spec_file in completed_dir.rglob('planning-spec.md'):
-                spec_str = str(spec_file)
+            for watch_dir in selected_dirs:
+                for spec_file in watch_dir.rglob('planning-spec.md'):
+                    spec_str = str(spec_file)
 
-                should_run = False
+                    should_run = False
 
-                if spec_str not in processed:
-                    # 새 파일
-                    processed.add(spec_str)
-                    file_mtimes[spec_str] = spec_file.stat().st_mtime
-                    should_run = True
-                    print(f'새 기획서 감지: {spec_file}')
-                elif auto_revalidate:
-                    # 기존 파일 수정 감지
-                    current_mtime = spec_file.stat().st_mtime
-                    if current_mtime > file_mtimes.get(spec_str, 0):
-                        file_mtimes[spec_str] = current_mtime
+                    if spec_str not in processed:
+                        # 새 파일
+                        processed.add(spec_str)
+                        file_mtimes[spec_str] = spec_file.stat().st_mtime
                         should_run = True
-                        print(f'기획서 수정 감지: {spec_file}')
+                        print(f'새 기획서 감지: {spec_file}')
+                    elif auto_revalidate:
+                        # 기존 파일 수정 감지
+                        current_mtime = spec_file.stat().st_mtime
+                        if current_mtime > file_mtimes.get(spec_str, 0):
+                            file_mtimes[spec_str] = current_mtime
+                            should_run = True
+                            print(f'기획서 수정 감지: {spec_file}')
 
-                if should_run:
-                    print('파이프라인을 시작합니다...')
-                    print()
+                    if should_run:
+                        print('파이프라인을 시작합니다...')
+                        print()
 
-                    try:
-                        orchestrator = Orchestrator(args.config)
-                        result = orchestrator.run_from_spec(spec_file)
+                        try:
+                            orchestrator = Orchestrator(args.config)
+                            result = orchestrator.run_from_spec(spec_file)
 
-                        if result['success']:
-                            print(f'[SUCCESS] 완료: {result["task_id"]}')
-                        else:
-                            print(f'[FAILED] 실패: {result.get("error")}')
-                    except Exception as e:
-                        print(f'[ERROR] 오류: {e}', file=sys.stderr)
+                            if result['success']:
+                                print(f'[SUCCESS] 완료: {result["task_id"]}')
+                            else:
+                                print(f'[FAILED] 실패: {result.get("error")}')
+                        except Exception as e:
+                            print(f'[ERROR] 오류: {e}', file=sys.stderr)
 
-                    print()
+                        print()
 
             time.sleep(5)  # 5초마다 폴링
 
