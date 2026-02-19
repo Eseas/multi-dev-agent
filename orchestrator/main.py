@@ -57,8 +57,25 @@ class Orchestrator:
     사용자가 수동으로 원하는 브랜치를 선택하여 머지
     """
 
-    def __init__(self, config_path: Path):
+    def __init__(self, config_path: Path, config_overrides: dict = None):
+        """
+        Args:
+            config_path: config.yaml 경로
+            config_overrides: config 값을 덮어쓸 딕셔너리.
+                예: {'project': {'target_repo': '...', 'default_branch': '...'}}
+        """
         self.config = self._load_config(config_path)
+
+        # config_overrides 적용 (중첩 딕셔너리 병합)
+        if config_overrides:
+            for section, values in config_overrides.items():
+                if section not in self.config:
+                    self.config[section] = {}
+                if isinstance(values, dict):
+                    self.config[section].update(values)
+                else:
+                    self.config[section] = values
+
         self.workspace_root = Path(self.config['workspace']['root'])
         self.prompts_dir = Path(self.config['prompts']['directory'])
 
@@ -76,10 +93,12 @@ class Orchestrator:
             max_retries=self.config['execution']['max_retries']
         )
 
-        # Git 관리자
-        target_repo = self.config['project'].get('target_repo', '')
-        default_branch = self.config['project'].get('default_branch', 'main')
-        github_token = self.config['project'].get('github_token', '')
+        # Git 관리자 (projects 레지스트리에서 resolve)
+        project_config = self._resolve_active_project()
+        target_repo = project_config.get('target_repo', '')
+        default_branch = project_config.get('default_branch', 'main')
+        token_ref = project_config.get('github_token', '')
+        github_token = self._resolve_github_token(token_ref)
         self.git_manager = GitManager(
             workspace_root=self.workspace_root,
             target_repo=target_repo,
@@ -916,6 +935,69 @@ class Orchestrator:
         with open(timeline_file, 'a') as f:
             f.write(line)
 
+    def _resolve_active_project(self) -> Dict[str, Any]:
+        """현재 활성 프로젝트 설정을 resolve한다.
+
+        config_overrides로 'project' 섹션이 직접 주어지면 그것을 사용하고,
+        아니면 projects 레지스트리에서 첫 번째 프로젝트를 사용한다.
+        하위 호환: 기존 'project' 섹션도 지원한다.
+
+        Returns:
+            프로젝트 설정 딕셔너리 (target_repo, default_branch, github_token)
+        """
+        # config_overrides로 project 섹션이 직접 주어진 경우
+        project_section = self.config.get('project')
+        if project_section and isinstance(project_section, dict):
+            if project_section.get('target_repo'):
+                return project_section
+
+        # projects 레지스트리에서 조회
+        projects = self.config.get('projects', {})
+        if projects:
+            # project 섹션에 이름만 있는 경우 (project: "dailyword")
+            if project_section and isinstance(project_section, str):
+                return self._resolve_project(project_section)
+            # 기본값: 첫 번째 프로젝트
+            first_name = next(iter(projects))
+            return projects[first_name]
+
+        # 아무것도 없으면 빈 설정 반환
+        return {'target_repo': '', 'default_branch': 'main', 'github_token': ''}
+
+    def _resolve_project(self, project_ref: str) -> Dict[str, Any]:
+        """projects 레지스트리에서 프로젝트를 resolve한다.
+
+        Args:
+            project_ref: projects의 키 이름
+
+        Returns:
+            프로젝트 설정 딕셔너리 (target_repo, default_branch, github_token).
+            찾지 못하면 빈 설정 반환.
+        """
+        projects = self.config.get('projects', {})
+        if projects and project_ref in projects:
+            return projects[project_ref]
+        logger.warning(f"프로젝트를 찾을 수 없습니다: {project_ref}")
+        return {'target_repo': '', 'default_branch': 'main', 'github_token': ''}
+
+    def _resolve_github_token(self, token_ref: str) -> str:
+        """github_tokens 섹션에서 토큰을 resolve한다.
+
+        Args:
+            token_ref: github_tokens의 키 이름 또는 직접 토큰 문자열
+
+        Returns:
+            실제 토큰 문자열. 키 이름이면 github_tokens에서 조회,
+            아니면 원본 문자열을 그대로 반환 (하위 호환).
+        """
+        if not token_ref:
+            return ''
+        github_tokens = self.config.get('github_tokens', {})
+        if github_tokens and token_ref in github_tokens:
+            return github_tokens[token_ref]
+        # github_tokens에 없으면 직접 토큰 문자열로 간주 (하위 호환)
+        return token_ref
+
     def _load_config(self, config_path: Path) -> Dict[str, Any]:
         """YAML 설정 파일을 로드한다."""
         import yaml
@@ -937,10 +1019,15 @@ class Orchestrator:
             'workspace': {
                 'root': './workspace'
             },
-            'project': {
-                'target_repo': '',
-                'default_branch': 'main',
-                'github_token': ''
+            'github_tokens': {
+                'default': ''
+            },
+            'projects': {
+                'my-project': {
+                    'target_repo': '',
+                    'default_branch': 'main',
+                    'github_token': 'default'
+                }
             },
             'prompts': {
                 'directory': './prompts'
@@ -956,7 +1043,12 @@ class Orchestrator:
                 'enable_test': True
             },
             'watch': {
-                'dirs': ['./workspace/planning/completed']
+                'dirs': [
+                    {
+                        'path': './workspace/planning/completed',
+                        'project': 'my-project',
+                    }
+                ]
             },
             'validation': {
                 'enabled': True,

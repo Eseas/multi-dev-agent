@@ -611,44 +611,123 @@ def _read_key():
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def _select_watch_dirs(all_dirs: list) -> list:
+def _resolve_project_from_config(config: dict, project_ref: str) -> dict:
+    """config의 projects 레지스트리에서 프로젝트를 resolve한다.
+
+    Args:
+        config: 전체 config 딕셔너리
+        project_ref: projects의 키 이름
+
+    Returns:
+        프로젝트 설정 딕셔너리 (target_repo, default_branch, github_token).
+        찾지 못하면 빈 값의 딕셔너리 반환.
+    """
+    projects = config.get('projects', {})
+    if projects and project_ref in projects:
+        proj = projects[project_ref]
+        return {
+            'target_repo': proj.get('target_repo', ''),
+            'default_branch': proj.get('default_branch', 'main'),
+            'github_token': proj.get('github_token', ''),
+        }
+    return {'target_repo': '', 'default_branch': 'main', 'github_token': ''}
+
+
+def _normalize_watch_dirs(raw_dirs: list, config: dict) -> list:
+    """watch.dirs 항목을 정규화한다.
+
+    각 항목의 project 필드를 projects 레지스트리에서 resolve하여
+    target_repo, default_branch, github_token을 채운다.
+
+    Args:
+        raw_dirs: config에서 읽은 watch.dirs 리스트
+        config: 전체 config 딕셔너리 (projects resolve용)
+
+    Returns:
+        정규화된 딕셔너리 리스트
+    """
+    normalized = []
+    for entry in raw_dirs:
+        if isinstance(entry, str):
+            normalized.append({
+                'path': entry,
+                'project': '',
+                'target_repo': '',
+                'default_branch': '',
+                'github_token': '',
+            })
+        elif isinstance(entry, dict):
+            project_ref = entry.get('project', '')
+            # project 이름으로 레지스트리에서 resolve
+            if project_ref:
+                proj = _resolve_project_from_config(config, project_ref)
+            else:
+                # 하위 호환: 직접 target_repo 등을 지정한 경우
+                proj = {
+                    'target_repo': entry.get('target_repo', ''),
+                    'default_branch': entry.get('default_branch', ''),
+                    'github_token': entry.get('github_token', ''),
+                }
+            normalized.append({
+                'path': entry.get('path', ''),
+                'project': project_ref,
+                'target_repo': proj['target_repo'],
+                'default_branch': proj['default_branch'],
+                'github_token': proj['github_token'],
+            })
+    return [d for d in normalized if d['path']]
+
+
+def _select_watch_dirs(all_entries: list) -> list:
     """화살표 키 기반 대화형 UI로 감시할 디렉토리를 선택받는다.
 
     Args:
-        all_dirs: config에서 읽어온 전체 감시 대상 디렉토리 리스트
+        all_entries: _normalize_watch_dirs로 정규화된 딕셔너리 리스트
 
     Returns:
-        사용자가 선택한 디렉토리 Path 리스트
+        사용자가 선택한 항목 딕셔너리 리스트 (path가 resolve된 상태)
     """
     resolved = []
-    for d in all_dirs:
-        p = Path(d).resolve()
+    for entry in all_entries:
+        p = Path(entry['path']).resolve()
         exists = p.exists()
-        resolved.append((p, exists))
+        project_name = entry.get('project', '')
+        repo = entry.get('target_repo', '')
+        # 저장소 이름 추출 (URL에서 마지막 부분)
+        repo_name = repo.rstrip('/').split('/')[-1].replace('.git', '') if repo else '(미설정)'
+        resolved.append({
+            **entry,
+            'resolved_path': p,
+            'exists': exists,
+            'project_name': project_name,
+            'repo_name': repo_name,
+        })
 
     cursor = 0
     checked = [False] * len(resolved)
     total = len(resolved)
+    # 각 항목 2줄 (경로 + 저장소) + 헤더 3줄 + 푸터 2줄
+    display_lines = total * 2 + 5
 
     def render():
-        # 커서를 맨 위로 이동하여 다시 그리기
-        sys.stdout.write(f'\033[{total + 5}A')  # 위로 이동
-        sys.stdout.write('\033[J')  # 아래 전체 지우기
+        sys.stdout.write(f'\033[{display_lines}A')
+        sys.stdout.write('\033[J')
 
         print('  감시할 디렉토리를 선택하세요')
         print(f'  (위/아래: 이동, Space: 선택/해제, Enter: 확정)\n')
 
-        for i, (p, exists) in enumerate(resolved):
+        for i, item in enumerate(resolved):
             marker = '[*]' if checked[i] else '[ ]'
             arrow = '>' if i == cursor else ' '
-            status = ' (자동 생성)' if not exists else ''
-            print(f'  {arrow} {marker} {p}{status}')
+            status = ' (자동 생성)' if not item['exists'] else ''
+            proj_label = f'[{item["project_name"]}] ' if item['project_name'] else ''
+            print(f'  {arrow} {marker} {proj_label}{item["resolved_path"]}{status}')
+            print(f'        repo: {item["repo_name"]}')
 
         selected_count = sum(checked)
         print(f'\n  {selected_count}개 선택됨')
 
-    # 초기 출력용 빈 줄 확보
-    for _ in range(total + 5):
+    for _ in range(display_lines):
         print()
 
     render()
@@ -667,19 +746,17 @@ def _select_watch_dirs(all_dirs: list) -> list:
             checked[cursor] = not checked[cursor]
         elif key == 'enter':
             selected = [
-                resolved[i][0]
-                for i in range(total) if checked[i]
+                resolved[i] for i in range(total) if checked[i]
             ]
             if not selected:
-                # 아무것도 선택 안 했으면 무시
                 continue
             break
 
         render()
 
     # 존재하지 않는 디렉토리 자동 생성
-    for d in selected:
-        d.mkdir(parents=True, exist_ok=True)
+    for item in selected:
+        item['resolved_path'].mkdir(parents=True, exist_ok=True)
 
     return selected
 
@@ -689,6 +766,7 @@ def cmd_watch(args):
 
     config의 watch.dirs에 지정된 디렉토리들을 감시하여
     새로운 기획서가 감지되면 자동으로 파이프라인을 실행한다.
+    각 디렉토리는 고유한 target_repo를 가질 수 있다.
     auto_revalidate가 true면 기존 기획서의 수정도 감지하여 재실행한다.
     """
     if not args.config.exists():
@@ -699,31 +777,51 @@ def cmd_watch(args):
     with open(args.config) as f:
         config = yaml.safe_load(f)
 
-    # watch.dirs에서 감시 경로 목록 로드
-    watch_dirs = config.get('watch', {}).get('dirs', [])
-    if not watch_dirs:
+    # watch.dirs 로드 및 정규화
+    raw_dirs = config.get('watch', {}).get('dirs', [])
+    watch_entries = _normalize_watch_dirs(raw_dirs, config)
+
+    if not watch_entries:
         print('config에 watch.dirs가 설정되지 않았습니다.')
         print()
-        print('config.yaml에 다음을 추가하세요:')
+        print('config.yaml 예시:')
+        print()
+        print('  projects:')
+        print('    my-project:')
+        print('      target_repo: "https://github.com/user/repo.git"')
+        print('      default_branch: "main"')
+        print('      github_token: "default"')
         print()
         print('  watch:')
         print('    dirs:')
-        print('      - /path/to/planning/completed')
-        print('      - /path/to/another/planning/completed')
+        print('      - path: /path/to/planning/completed')
+        print('        project: "my-project"')
         print()
 
-        # 기본 경로 제안
+        # 기본 경로 제안: projects 레지스트리에서 첫 번째 프로젝트 사용
         workspace_root = config.get('workspace', {}).get('root', '')
-        if workspace_root:
-            default_dir = str(
+        projects = config.get('projects', {})
+        first_project_name = next(iter(projects), '') if projects else ''
+        first_project = projects.get(first_project_name, {}) if first_project_name else {}
+        target_repo = first_project.get('target_repo', '')
+
+        if workspace_root and target_repo:
+            default_path = str(
                 (Path(workspace_root) / 'planning' / 'completed').resolve()
             )
-            answer = input(
-                f'기본 경로({default_dir})를 사용하시겠습니까? [Y/n]: '
-            ).strip().lower()
+            print(f'기본 설정을 사용하시겠습니까?')
+            print(f'  경로: {default_path}')
+            print(f'  프로젝트: {first_project_name}')
+            print(f'  저장소: {target_repo}')
+            answer = input('[Y/n]: ').strip().lower()
             if answer in ('', 'y', 'yes'):
-                watch_dirs = [default_dir]
-                print(f'기본 경로를 사용합니다: {default_dir}')
+                watch_entries = [{
+                    'path': default_path,
+                    'project': first_project_name,
+                    'target_repo': first_project.get('target_repo', ''),
+                    'default_branch': first_project.get('default_branch', 'main'),
+                    'github_token': first_project.get('github_token', ''),
+                }]
                 print()
             else:
                 return 1
@@ -731,20 +829,36 @@ def cmd_watch(args):
             return 1
 
     # 디렉토리 선택 시퀀스
-    if len(watch_dirs) == 1:
-        # 단일 경로면 선택 없이 바로 사용
-        selected_dirs = [Path(watch_dirs[0]).resolve()]
-        selected_dirs[0].mkdir(parents=True, exist_ok=True)
+    if len(watch_entries) == 1:
+        entry = watch_entries[0]
+        p = Path(entry['path']).resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        project_name = entry.get('project', '')
+        repo = entry.get('target_repo', '')
+        repo_name = repo.rstrip('/').split('/')[-1].replace('.git', '') if repo else '(미설정)'
+        selected = [{
+            **entry,
+            'resolved_path': p,
+            'project_name': project_name,
+            'repo_name': repo_name,
+        }]
     else:
-        selected_dirs = _select_watch_dirs(watch_dirs)
+        selected = _select_watch_dirs(watch_entries)
 
     auto_revalidate = config.get('validation', {}).get('auto_revalidate', False)
+
+    # 경로 → 항목 매핑 (감지 시 저장소 정보 조회용)
+    dir_to_entry = {}
+    for item in selected:
+        dir_to_entry[str(item['resolved_path'])] = item
 
     print()
     print('=== 감시 모드 시작 ===')
     print()
-    for d in selected_dirs:
-        print(f'  감시 중: {d}')
+    for item in selected:
+        proj_label = f'[{item.get("project_name", "")}] ' if item.get('project_name') else ''
+        print(f'  감시 중: {proj_label}{item["resolved_path"]}')
+        print(f'    repo: {item["repo_name"]}')
     print()
     print('새로운 planning-spec.md 파일을 감지하면 자동으로 실행합니다.')
     if auto_revalidate:
@@ -753,32 +867,39 @@ def cmd_watch(args):
     print()
 
     processed = set()
-    # mtime 추적 (auto_revalidate용)
     file_mtimes = {}
 
     # 기존 파일 등록 (모든 감시 디렉토리)
-    for watch_dir in selected_dirs:
+    for item in selected:
+        watch_dir = item['resolved_path']
         for existing in watch_dir.rglob('planning-spec.md'):
             spec_str = str(existing)
             processed.add(spec_str)
             file_mtimes[spec_str] = existing.stat().st_mtime
 
+    def _find_entry_for_spec(spec_path: Path) -> dict:
+        """기획서 파일이 속한 감시 디렉토리의 항목을 찾는다."""
+        spec_str = str(spec_path)
+        for dir_str, entry in dir_to_entry.items():
+            if spec_str.startswith(dir_str):
+                return entry
+        return {}
+
     try:
         while True:
-            for watch_dir in selected_dirs:
+            for item in selected:
+                watch_dir = item['resolved_path']
                 for spec_file in watch_dir.rglob('planning-spec.md'):
                     spec_str = str(spec_file)
 
                     should_run = False
 
                     if spec_str not in processed:
-                        # 새 파일
                         processed.add(spec_str)
                         file_mtimes[spec_str] = spec_file.stat().st_mtime
                         should_run = True
                         print(f'새 기획서 감지: {spec_file}')
                     elif auto_revalidate:
-                        # 기존 파일 수정 감지
                         current_mtime = spec_file.stat().st_mtime
                         if current_mtime > file_mtimes.get(spec_str, 0):
                             file_mtimes[spec_str] = current_mtime
@@ -786,11 +907,35 @@ def cmd_watch(args):
                             print(f'기획서 수정 감지: {spec_file}')
 
                     if should_run:
+                        entry = _find_entry_for_spec(spec_file)
+                        project_name = entry.get('project_name', '') or entry.get('project', '')
+                        repo = entry.get('target_repo', '')
+                        branch = entry.get('default_branch', '')
+                        token = entry.get('github_token', '')
+                        if project_name:
+                            print(f'  프로젝트: {project_name}')
+                        if repo:
+                            print(f'  대상 저장소: {repo}')
+
+                        # 디렉토리별 저장소 정보를 config override로 전달
+                        overrides = {}
+                        if repo or branch or token:
+                            overrides['project'] = {}
+                            if repo:
+                                overrides['project']['target_repo'] = repo
+                            if branch:
+                                overrides['project']['default_branch'] = branch
+                            if token:
+                                overrides['project']['github_token'] = token
+
                         print('파이프라인을 시작합니다...')
                         print()
 
                         try:
-                            orchestrator = Orchestrator(args.config)
+                            orchestrator = Orchestrator(
+                                args.config,
+                                config_overrides=overrides if overrides else None
+                            )
                             result = orchestrator.run_from_spec(spec_file)
 
                             if result['success']:
@@ -802,7 +947,7 @@ def cmd_watch(args):
 
                         print()
 
-            time.sleep(5)  # 5초마다 폴링
+            time.sleep(5)
 
     except KeyboardInterrupt:
         print('\n감시 모드를 종료합니다.')
