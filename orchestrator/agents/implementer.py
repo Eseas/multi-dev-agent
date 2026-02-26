@@ -48,6 +48,8 @@ class ImplementerAgent(BaseAgent):
         approach = context.get('approach', {})
         spec_content = context.get('spec_content', '')
         project_context_path = context.get('project_context_path', '')
+        pipeline_mode = context.get('pipeline_mode', 'alternative')
+        api_contract_path = context.get('api_contract_path', '')
 
         if not approach:
             return {
@@ -67,6 +69,8 @@ class ImplementerAgent(BaseAgent):
             approach=approach_desc,
             approach_id=self.approach_id,
             project_context_path=project_context_path,
+            pipeline_mode=pipeline_mode,
+            api_contract_path=api_contract_path,
         )
 
         # Claude 실행 (git worktree = 타겟 프로젝트 내부에서)

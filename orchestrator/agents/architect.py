@@ -42,6 +42,7 @@ class ArchitectAgent(BaseAgent):
         num_approaches = context.get('num_approaches', 1)
         project_path = context.get('project_path', '')
         project_context_path = context.get('project_context_path', '')
+        pipeline_mode = context.get('pipeline_mode', 'alternative')
 
         if not spec_content:
             return {
@@ -58,6 +59,7 @@ class ArchitectAgent(BaseAgent):
             num_approaches=num_approaches,
             project_path=project_path,
             project_context_path=project_context_path,
+            pipeline_mode=pipeline_mode,
         )
 
         # Claude 실행 (타겟 프로젝트 디렉토리에서)
@@ -79,16 +81,30 @@ class ArchitectAgent(BaseAgent):
         # approaches.json 저장
         approaches_data = {
             'approaches': approaches,
-            'num_approaches': len(approaches)
+            'num_approaches': len(approaches),
+            'pipeline_mode': pipeline_mode,
         }
+
+        # 통합 모드: API 계약서 파싱 및 저장
+        api_contract = None
+        if pipeline_mode == 'concern':
+            api_contract = self._parse_api_contract(result['output'])
+            if api_contract:
+                approaches_data['api_contract'] = api_contract
+                self.write_output('api-contract.json', api_contract)
+                logger.info("Architect: API 계약서 생성 완료")
+            else:
+                logger.warning("Architect: 통합 모드이지만 API 계약서가 생성되지 않았습니다")
+
         self.write_output('approaches.json', approaches_data)
 
-        logger.info(f"Architect: {len(approaches)}개 구현 계획 생성 완료")
+        logger.info(f"Architect: {len(approaches)}개 구현 계획 생성 완료 (모드: {pipeline_mode})")
 
         return {
             'success': True,
             'approaches': approaches,
-            'num_approaches': len(approaches)
+            'num_approaches': len(approaches),
+            'api_contract': api_contract,
         }
 
     def _parse_approaches(self, output: str) -> list:
@@ -118,3 +134,30 @@ class ArchitectAgent(BaseAgent):
 
         logger.warning("approaches를 JSON으로 파싱할 수 없습니다")
         return []
+
+    def _parse_api_contract(self, output: str) -> dict:
+        """Claude 출력에서 api-contract.json을 파싱한다 (통합 모드 전용)."""
+        import json
+        import re
+
+        # ```json:api-contract.json { ... } ``` 블록 탐색
+        contract_match = re.search(
+            r'```json:api-contract\.json\s*(\{.*?\})\s*```',
+            output, re.DOTALL
+        )
+        if contract_match:
+            try:
+                return json.loads(contract_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # ```json 블록 중 "endpoints" 키가 있는 것 탐색 (fallback)
+        for m in re.finditer(r'```json\s*(\{.*?\})\s*```', output, re.DOTALL):
+            try:
+                data = json.loads(m.group(1))
+                if isinstance(data, dict) and 'endpoints' in data:
+                    return data
+            except json.JSONDecodeError:
+                continue
+
+        return None

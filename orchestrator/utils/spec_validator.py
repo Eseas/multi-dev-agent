@@ -134,6 +134,38 @@ def validate_spec(spec_path: Path, strict_mode: bool = False) -> ValidationResul
                 )
             seen.add(name)
 
+    # === 4단계: 통합 모드 검증 ===
+    is_concern_mode = bool(
+        re.search(r'##\s+구현\s*방법\s*\(\d+개\s*통합\)', content)
+        or re.search(r'파이프라인\s*모드\s*:\s*통합', content)
+    )
+
+    if is_concern_mode:
+        if len(method_headings) < 2:
+            errors.append(
+                "통합 모드에서는 최소 2개의 방법(관심사)이 필요합니다."
+            )
+
+        concern_count = len(re.findall(r'관심사\s*[:\*]*\s*[:：]', content))
+        if concern_count == 0:
+            warnings.append(
+                "통합 모드에서는 각 방법에 '관심사:' 라벨을 추가하는 것을 권장합니다. "
+                "(예: **관심사**: frontend)"
+            )
+
+        # 통합 모드 헤딩의 N과 실제 방법 개수 비교
+        concern_n_match = re.search(
+            r'##\s+구현\s*방법\s*\((\d+)개\s*통합\)', content
+        )
+        if concern_n_match and method_headings:
+            declared_n = int(concern_n_match.group(1))
+            actual_n = len(method_headings)
+            if declared_n != actual_n:
+                errors.append(
+                    f"통합 방법 개수 불일치: "
+                    f"헤딩에는 {declared_n}개라 했지만 실제 방법은 {actual_n}개입니다."
+                )
+
     # strict_mode: 경고를 오류로 전환
     if strict_mode and warnings:
         errors.extend(warnings)

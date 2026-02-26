@@ -1,10 +1,12 @@
 """Main orchestrator for managing the multi-agent development pipeline.
 
-v5: Phase 5/6 제거, 평가까지만 실행 후 종료.
+v6: 통합(concern) 모드 추가.
 - Phase 1: Architect (접근법 설계)
 - Phase 2: Implementer (병렬 구현)
 - Phase 3: Reviewer + Tester (병렬 리뷰/테스트)
-- Phase 4: Comparator (N≥2일 때만, 평가/비교)
+- Phase 4:
+  - alternative 모드: Comparator (N≥2일 때만, 평가/비교)
+  - concern 모드: Integrator (모든 구현을 머지하여 통합)
 - 평가 결과 저장 후 종료 (merge는 사용자가 수동으로)
 """
 
@@ -36,6 +38,7 @@ from .agents import (
     ReviewerAgent,
     TesterAgent,
     ComparatorAgent,
+    IntegratorAgent,
 )
 
 
@@ -209,9 +212,11 @@ class Orchestrator:
             spec = parse_planning_spec(spec_path)
             spec_content = spec.raw_content
             num_approaches = spec.num_approaches or self.num_approaches
+            pipeline_mode = spec.mode  # "alternative" | "concern"
 
             self.logger.info(
                 f"기획서 파싱 완료: N={num_approaches}, "
+                f"모드={pipeline_mode}, "
                 f"방법 {len(spec.methods)}개 감지"
             )
 
@@ -279,6 +284,7 @@ class Orchestrator:
                 'num_approaches': num_approaches,
                 'project_path': str(clone_path),
                 'project_context_path': project_context_path,
+                'pipeline_mode': pipeline_mode,
             })
 
             if not arch_result['success']:
@@ -289,8 +295,21 @@ class Orchestrator:
             approaches = arch_result['approaches']
             manifest['phases']['phase1'] = {
                 'status': 'completed',
-                'num_approaches': len(approaches)
+                'num_approaches': len(approaches),
+                'pipeline_mode': pipeline_mode,
             }
+
+            # 통합 모드: API 계약서 경로 추출
+            api_contract_path = ''
+            if pipeline_mode == 'concern':
+                contract_file = architect_workspace / 'api-contract.json'
+                if contract_file.exists():
+                    api_contract_path = str(contract_file.resolve())
+                    self.logger.info(f"API 계약서 경로: {api_contract_path}")
+                else:
+                    self.logger.warning(
+                        "통합 모드이지만 API 계약서가 생성되지 않았습니다"
+                    )
 
             self._log_timeline(
                 timeline_file, "PHASE",
@@ -366,7 +385,9 @@ class Orchestrator:
             )
 
             impl_results = self._run_implementations_parallel(
-                task_id, approaches, spec_content, project_context_path
+                task_id, approaches, spec_content, project_context_path,
+                pipeline_mode=pipeline_mode,
+                api_contract_path=api_contract_path,
             )
 
             manifest['phases']['phase2'] = {
@@ -414,10 +435,17 @@ class Orchestrator:
                     'error': '모든 구현이 실패했습니다'
                 }
 
-            # === Phase 4: 평가 (N≥2) 또는 요약 (N=1) ===
+            # === Phase 4: 평가/통합 ===
             evaluation_summary = None
-            if len(successful_impls) >= 2:
-                # Phase 4: Comparator 실행
+            if pipeline_mode == 'concern':
+                # 통합 모드: 모든 구현을 머지하여 통합
+                evaluation_summary = self._run_phase4_integration(
+                    task_id, task_dir, timeline_file,
+                    manifest_file, manifest, successful_impls,
+                    api_contract_path
+                )
+            elif len(successful_impls) >= 2:
+                # 대안 모드 (N≥2): Comparator 실행
                 evaluation_summary = self._run_phase4_comparison(
                     task_id, task_dir, timeline_file,
                     manifest_file, manifest, successful_impls
@@ -468,7 +496,9 @@ class Orchestrator:
         task_id: str,
         approaches: List[Dict],
         spec_content: str,
-        project_context_path: str = ''
+        project_context_path: str = '',
+        pipeline_mode: str = 'alternative',
+        api_contract_path: str = '',
     ) -> List[Dict[str, Any]]:
         """N개 Implementer를 병렬로 실행한다."""
         if len(approaches) == 1:
@@ -476,7 +506,9 @@ class Orchestrator:
             return [
                 self._run_single_implementation(
                     task_id, 1, approaches[0],
-                    spec_content, project_context_path
+                    spec_content, project_context_path,
+                    pipeline_mode=pipeline_mode,
+                    api_contract_path=api_contract_path,
                 )
             ]
 
@@ -488,7 +520,9 @@ class Orchestrator:
                 future = executor.submit(
                     self._run_single_implementation,
                     task_id, i, approach,
-                    spec_content, project_context_path
+                    spec_content, project_context_path,
+                    pipeline_mode=pipeline_mode,
+                    api_contract_path=api_contract_path,
                 )
                 future_to_idx[future] = i - 1
 
@@ -516,7 +550,9 @@ class Orchestrator:
         impl_id: int,
         approach: Dict,
         spec_content: str,
-        project_context_path: str = ''
+        project_context_path: str = '',
+        pipeline_mode: str = 'alternative',
+        api_contract_path: str = '',
     ) -> Dict[str, Any]:
         """단일 Implementer를 실행한다."""
         worktree_path = self.git_manager.create_worktree(task_id, impl_id)
@@ -524,7 +560,7 @@ class Orchestrator:
 
         self.logger.info(
             f"Implementer {impl_id}: worktree={worktree_path}, "
-            f"branch={branch_name}"
+            f"branch={branch_name}, mode={pipeline_mode}"
         )
 
         implementer = ImplementerAgent(
@@ -538,6 +574,8 @@ class Orchestrator:
             'approach': approach,
             'spec_content': spec_content,
             'project_context_path': project_context_path,
+            'pipeline_mode': pipeline_mode,
+            'api_contract_path': api_contract_path,
         })
 
         change_summary = {}
@@ -638,6 +676,117 @@ class Orchestrator:
         else:
             impl['test_success'] = None
             impl['test_workspace'] = ''
+
+    # ── Phase 4: 통합 (concern 모드) ─────────────────────────
+
+    def _run_phase4_integration(
+        self,
+        task_id: str,
+        task_dir: Path,
+        timeline_file: Path,
+        manifest_file: Path,
+        manifest: Dict,
+        successful_impls: List[Dict],
+        api_contract_path: str = '',
+    ) -> Dict[str, Any]:
+        """Phase 4 (통합): 관심사별 구현을 하나의 프로젝트로 통합한다.
+
+        1. 통합 브랜치/워크트리 생성
+        2. 각 구현 브랜치를 순차적으로 머지
+        3. IntegratorAgent로 충돌 해결 및 접착 코드 작성
+        """
+        self._log_timeline(timeline_file, "PHASE", "integration_start")
+        self._update_manifest(manifest_file, manifest, 'phase4_integration')
+        self.notifier.notify_stage_started("Phase 4: Integration")
+
+        self.logger.info(
+            f"Phase 4 통합 시작: {len(successful_impls)}개 구현 통합"
+        )
+
+        # Step 1: 통합 워크트리 생성
+        integration_path, integration_branch = (
+            self.git_manager.create_integration_worktree(task_id)
+        )
+
+        # Step 2: 각 구현 브랜치를 순차적으로 머지
+        merge_results = []
+        for impl in successful_impls:
+            branch = impl['branch']
+            try:
+                self.git_manager._run_git(
+                    ['merge', branch, '--no-edit'],
+                    cwd=integration_path
+                )
+                merge_results.append({
+                    'branch': branch,
+                    'status': 'merged',
+                    'conflict': False
+                })
+                self.logger.info(f"머지 성공: {branch}")
+            except GitError as e:
+                merge_results.append({
+                    'branch': branch,
+                    'status': 'conflict',
+                    'conflict': True,
+                    'error': str(e)
+                })
+                self.logger.warning(f"머지 충돌: {branch} - {e}")
+                # 충돌 상태의 머지를 중단하여 다음 머지 시도 가능
+                try:
+                    self.git_manager._run_git(
+                        ['merge', '--abort'],
+                        cwd=integration_path
+                    )
+                except GitError:
+                    pass
+
+        has_conflicts = any(r['conflict'] for r in merge_results)
+
+        # Step 3: IntegratorAgent 실행
+        integrator_workspace = task_dir / 'integrator'
+        integrator_workspace.mkdir(parents=True, exist_ok=True)
+
+        integrator = IntegratorAgent(
+            workspace=integrator_workspace,
+            executor=self.executor,
+            prompt_file=self.prompts_dir / 'integrator.md'
+        )
+
+        integration_result = integrator.run({
+            'integration_path': str(integration_path),
+            'implementations': successful_impls,
+            'merge_results': merge_results,
+            'api_contract_path': api_contract_path,
+            'has_conflicts': has_conflicts,
+        })
+
+        # Step 4: 결과 저장
+        manifest['phases']['phase4'] = {
+            'status': 'completed',
+            'mode': 'integration',
+            'merge_results': [
+                {'branch': r['branch'], 'conflict': r['conflict']}
+                for r in merge_results
+            ],
+            'integration_success': integration_result.get('success', False),
+        }
+
+        self._log_timeline(timeline_file, "PHASE", "integration_done")
+        self.notifier.notify_stage_completed("Phase 4: Integration")
+
+        self.logger.info(
+            f"Phase 4 통합 완료: "
+            f"충돌={'있음' if has_conflicts else '없음'}, "
+            f"통합={'성공' if integration_result.get('success') else '실패'}"
+        )
+
+        return {
+            'status': 'integrated',
+            'integration_branch': integration_branch,
+            'integration_path': str(integration_path),
+            'merge_results': merge_results,
+            'integration_success': integration_result.get('success', False),
+        }
 
     # ── Phase 4: 비교 (N≥2) ────────────────────────────────
 
@@ -802,6 +951,35 @@ class Orchestrator:
                     f"[{comp_file}]({comp_file})",
                     ""
                 ])
+        elif evaluation_summary.get('status') == 'integrated':
+            # concern 모드: 통합 결과
+            lines.extend([
+                "## 통합 결과",
+                "",
+                f"**통합 브랜치**: `{evaluation_summary['integration_branch']}`",
+                f"**통합 경로**: `{evaluation_summary['integration_path']}`",
+                f"**통합 성공**: {'✅' if evaluation_summary['integration_success'] else '⚠️ 부분 성공'}",
+                "",
+                "### 머지 결과",
+                ""
+            ])
+            for mr in evaluation_summary.get('merge_results', []):
+                status = '✅ Merged' if not mr['conflict'] else '⚠️ Conflict'
+                lines.append(f"- `{mr['branch']}`: {status}")
+            lines.append("")
+
+            lines.extend([
+                "### 구현별 정보",
+                ""
+            ])
+            for impl in implementations:
+                concern = impl.get('approach', {}).get('concern', 'N/A')
+                lines.extend([
+                    f"#### impl-{impl['approach_id']} ({concern})",
+                    f"- **접근법**: {impl['approach'].get('name', 'N/A')}",
+                    f"- **브랜치**: `{impl['branch']}`",
+                    ""
+                ])
         else:
             # 평가 실패
             lines.extend([
@@ -816,23 +994,39 @@ class Orchestrator:
             "",
             "## 다음 단계",
             "",
-            "1. 위 평가 결과를 검토하세요",
-            "2. 각 구현의 코드를 확인하세요:",
-            ""
         ])
 
-        for impl in implementations:
-            lines.append(f"   - impl-{impl['approach_id']}: `{impl['worktree_path']}`")
-
-        lines.extend([
-            "",
-            "3. 원하는 구현을 선택하여 타겟 프로젝트에 머지하세요:",
-            "   ```bash",
-            "   cd <타겟-프로젝트>",
-            "   git merge <선택한-브랜치>",
-            "   ```",
-            ""
-        ])
+        if evaluation_summary.get('status') == 'integrated':
+            # 통합 모드: 통합 브랜치 머지 가이드
+            lines.extend([
+                "1. 통합 브랜치의 코드를 확인하세요:",
+                f"   `{evaluation_summary['integration_path']}`",
+                "",
+                "2. 통합 결과를 타겟 프로젝트에 머지하세요:",
+                "   ```bash",
+                "   cd <타겟-프로젝트>",
+                f"   git merge {evaluation_summary['integration_branch']}",
+                "   ```",
+                ""
+            ])
+        else:
+            # 대안 모드: 개별 구현 선택 가이드
+            lines.extend([
+                "1. 위 평가 결과를 검토하세요",
+                "2. 각 구현의 코드를 확인하세요:",
+                ""
+            ])
+            for impl in implementations:
+                lines.append(f"   - impl-{impl['approach_id']}: `{impl['worktree_path']}`")
+            lines.extend([
+                "",
+                "3. 원하는 구현을 선택하여 타겟 프로젝트에 머지하세요:",
+                "   ```bash",
+                "   cd <타겟-프로젝트>",
+                "   git merge <선택한-브랜치>",
+                "   ```",
+                ""
+            ])
 
         result_file.write_text('\n'.join(lines), encoding='utf-8')
         self.logger.info(f"평가 결과 저장: {result_file}")

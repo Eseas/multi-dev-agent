@@ -62,3 +62,63 @@
 - 각 접근법의 트레이드오프를 명확히 설명하세요
 
 정확히 {num_approaches}개의 접근법을 생성하세요.
+
+---
+
+## 파이프라인 모드: {pipeline_mode}
+
+### "alternative" 모드 (기본)
+
+각 접근법은 **독립적인 대안**입니다. 나중에 가장 좋은 것 하나가 선택됩니다.
+- 서로 다른 아키텍처 패턴, 라이브러리, 설계 철학을 사용하세요
+- 각 접근법은 독립적으로 완전한 구현이어야 합니다
+
+### "concern" 모드 (통합)
+
+각 접근법은 **보완적 관심사**입니다. **모두 합쳐져 하나의 시스템이 됩니다.**
+
+**반드시 지켜야 할 규칙:**
+1. 각 접근법에 `"concern"` 필드를 추가하세요 (예: `"frontend"`, `"backend"`)
+2. 각 접근법은 자신의 관심사 범위의 코드만 담당합니다
+3. API 계약서(api-contract.json)를 **별도로 반드시 생성**하세요
+
+**concern 모드 JSON 출력에 추가할 필드:**
+```json
+[
+  {
+    "name": "접근법 이름",
+    "concern": "frontend",
+    "description": "...",
+    "key_decisions": [...],
+    "libraries": [...],
+    "trade_offs": [...],
+    "complexity": "medium",
+    "estimated_effort": "medium"
+  }
+]
+```
+
+**API 계약서** - 다음 형식으로 별도 JSON 블록을 생성하세요:
+
+```json:api-contract.json
+{
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/example",
+      "description": "엔드포인트 설명",
+      "request": {
+        "headers": {},
+        "body": {}
+      },
+      "response": {
+        "status": 200,
+        "body": {}
+      }
+    }
+  ],
+  "shared_types": {}
+}
+```
+
+이 계약서는 모든 관심사(concern)가 공유하며, 각 Implementer가 이를 준수합니다.

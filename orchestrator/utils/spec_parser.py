@@ -22,6 +22,7 @@ class MethodSpec:
     tech_stack: List[str] = field(default_factory=list)
     pros: List[str] = field(default_factory=list)
     cons: List[str] = field(default_factory=list)
+    concern: str = ""  # 통합 모드: "frontend", "backend" 등
 
 
 @dataclass
@@ -31,6 +32,7 @@ class PlanningSpec:
     raw_content: str
     num_approaches: int
     methods: List[MethodSpec] = field(default_factory=list)
+    mode: str = "alternative"  # "alternative" (대안 비교) | "concern" (통합)
 
 
 def parse_planning_spec(spec_path: Path) -> PlanningSpec:
@@ -56,6 +58,7 @@ def parse_planning_spec(spec_path: Path) -> PlanningSpec:
 def _parse_content(content: str) -> PlanningSpec:
     """마크다운 텍스트를 파싱한다."""
     title = _extract_title(content)
+    mode = _extract_pipeline_mode(content)
     methods = _extract_methods(content)
     declared_n = _extract_declared_n(content)
 
@@ -81,7 +84,8 @@ def _parse_content(content: str) -> PlanningSpec:
         title=title,
         raw_content=content,
         num_approaches=num_approaches,
-        methods=methods
+        methods=methods,
+        mode=mode,
     )
 
 
@@ -91,6 +95,25 @@ def _extract_title(content: str) -> str:
     if match:
         return match.group(1).strip()
     return "제목 없음"
+
+
+def _extract_pipeline_mode(content: str) -> str:
+    """파이프라인 모드를 추출한다.
+
+    다음 패턴을 인식:
+    - "## 구현 방법 (N개 통합)" → "concern"
+    - "파이프라인 모드: 통합" → "concern"
+    - 그 외 → "alternative" (기본값, 하위 호환)
+    """
+    # 패턴 1: 헤딩에서 추출 "## 구현 방법 (N개 통합)"
+    if re.search(r'##\s+구현\s*방법\s*\(\d+개\s*통합\)', content):
+        return "concern"
+
+    # 패턴 2: 명시적 선언 "파이프라인 모드: 통합"
+    if re.search(r'파이프라인\s*모드\s*:\s*통합', content):
+        return "concern"
+
+    return "alternative"
 
 
 def _extract_declared_n(content: str) -> Optional[int]:
@@ -144,12 +167,21 @@ def _extract_methods(content: str) -> List[MethodSpec]:
 
         section_content = content[start:end].strip()
 
+        # 관심사(concern) 추출 (통합 모드용)
+        concern = ""
+        concern_match = re.search(r'관심사\s*[:\*]*\s*[:：]\s*(.+)', section_content)
+        if not concern_match:
+            concern_match = re.search(r'\*\*관심사\*\*\s*[:：]\s*(.+)', section_content)
+        if concern_match:
+            concern = concern_match.group(1).strip()
+
         methods.append(MethodSpec(
             name=method_name,
             description=section_content,
             tech_stack=_extract_tech_from_text(section_content),
             pros=_extract_list_items(section_content, '예상 장점'),
-            cons=_extract_list_items(section_content, '예상 단점')
+            cons=_extract_list_items(section_content, '예상 단점'),
+            concern=concern,
         ))
 
     return methods

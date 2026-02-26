@@ -198,6 +198,39 @@ class GitManager:
         """
         return f"{task_id}/impl-{impl_id}"
 
+    def create_integration_worktree(self, task_id: str) -> tuple:
+        """통합 브랜치용 worktree를 생성한다.
+
+        Args:
+            task_id: 작업 ID
+
+        Returns:
+            (worktree_path, branch_name) 튜플
+
+        Raises:
+            GitError: worktree 생성 실패 시
+        """
+        branch_name = f"{task_id}/integrated"
+        worktree_path = (
+            self.workspace_root / 'tasks' / task_id / 'integrated'
+        )
+
+        # 이미 존재하면 제거 후 재생성
+        if worktree_path.exists():
+            logger.warning(f"통합 worktree 이미 존재, 제거 후 재생성: {worktree_path}")
+            self.remove_worktree(worktree_path)
+
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"통합 worktree 생성: {worktree_path} (branch: {branch_name})")
+        self._run_git([
+            'worktree', 'add', str(worktree_path.resolve()),
+            '-b', branch_name,
+            f'origin/{self.default_branch}'
+        ], cwd=self.clone_dir)
+
+        return worktree_path, branch_name
+
     def get_change_summary(self, worktree_path: Path) -> Dict:
         """worktree의 변경 사항 요약을 반환한다.
 

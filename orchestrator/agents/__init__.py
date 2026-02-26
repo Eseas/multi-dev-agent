@@ -6,6 +6,7 @@ from .implementer import ImplementerAgent
 from .reviewer import ReviewerAgent
 from .tester import TesterAgent
 from .comparator import ComparatorAgent
+from .integrator import IntegratorAgent
 
 __all__ = [
     'BaseAgent',
@@ -14,4 +15,5 @@ __all__ = [
     'ReviewerAgent',
     'TesterAgent',
     'ComparatorAgent',
+    'IntegratorAgent',
 ]

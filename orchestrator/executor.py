@@ -222,6 +222,18 @@ class ClaudeExecutor:
                     "Glob(*)",
                     "Grep(*)"
                 ]
+            },
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "bash ~/.claude/hooks/save-conversation-log.sh"
+                            }
+                        ]
+                    }
+                ]
             }
         }
 
