@@ -10,6 +10,7 @@ import sys
 import time
 import logging
 from pathlib import Path
+from datetime import datetime
 
 from orchestrator.main import Orchestrator
 from orchestrator.utils import atomic_write
@@ -86,6 +87,11 @@ Examples:
         '-v', '--verbose',
         action='store_true',
         help='상세 로깅 활성화'
+    )
+    run_parser.add_argument(
+        '--no-tui',
+        action='store_true',
+        help='TUI 없이 기존 방식으로 실행'
     )
 
     # approve
@@ -180,6 +186,45 @@ Examples:
         help='설정 파일 경로'
     )
 
+    # questions
+    questions_parser = subparsers.add_parser(
+        'questions', help='대기 중인 질문 확인'
+    )
+    questions_parser.add_argument(
+        'task_id', type=str, help='태스크 ID'
+    )
+    questions_parser.add_argument(
+        '-c', '--config',
+        type=Path,
+        default=Path('config.yaml'),
+        help='설정 파일 경로'
+    )
+    questions_parser.add_argument(
+        '-a', '--all',
+        action='store_true',
+        help='모든 질문 표시 (완료/만료 포함)'
+    )
+
+    # answer
+    answer_parser = subparsers.add_parser(
+        'answer', help='질문에 답변'
+    )
+    answer_parser.add_argument(
+        'task_id', type=str, help='태스크 ID'
+    )
+    answer_parser.add_argument(
+        'question_id', type=str, help='질문 ID (예: q-a1b2c3d4)'
+    )
+    answer_parser.add_argument(
+        'response', type=str, help='답변 내용'
+    )
+    answer_parser.add_argument(
+        '-c', '--config',
+        type=Path,
+        default=Path('config.yaml'),
+        help='설정 파일 경로'
+    )
+
     # watch
     watch_parser = subparsers.add_parser(
         'watch', help='기획서 감시 모드 (자동 실행)'
@@ -205,6 +250,8 @@ Examples:
         'revise': cmd_revise,
         'abort': cmd_abort,
         'status': cmd_status,
+        'questions': cmd_questions,
+        'answer': cmd_answer,
         'watch': cmd_watch,
     }
 
@@ -254,6 +301,19 @@ def cmd_run(args):
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
+
+    # TUI 모드 시도
+    if not args.no_tui:
+        try:
+            from orchestrator.tui import TUI_AVAILABLE
+            if TUI_AVAILABLE:
+                return _run_with_tui(args, spec_path)
+        except ImportError:
+            pass
+        # TUI 사용 불가 시 기존 방식으로 fallback
+        print('[INFO] TUI를 사용할 수 없습니다. 기존 방식으로 실행합니다.')
+        print('  TUI 사용: pip install textual')
+        print()
 
     try:
         print(f'기획서: {spec_path}')
@@ -356,6 +416,27 @@ def _write_checkpoint_decision(task_dir: Path, decision: dict) -> bool:
     decision_file = task_dir / 'checkpoint-decision.json'
     atomic_write(decision_file, decision)
     return True
+
+
+def _run_with_tui(args, spec_path: Path) -> int:
+    """TUI 모드로 파이프라인을 실행한다."""
+    from orchestrator.tui import DashboardApp
+
+    orchestrator = Orchestrator(args.config)
+    app = DashboardApp(orchestrator, spec_path)
+
+    try:
+        app.run()
+        return 0
+    except KeyboardInterrupt:
+        print('\n사용자에 의해 중단되었습니다')
+        return 130
+    except Exception as e:
+        print(f'[ERROR] TUI 오류: {e}', file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
 
 
 def cmd_approve(args):
@@ -580,6 +661,108 @@ def cmd_status(args):
             except (json.JSONDecodeError, OSError):
                 print(f'{td.name:<30} {"읽기 오류":<20}')
 
+    return 0
+
+
+def cmd_questions(args):
+    """대기 중인 질문을 확인한다."""
+    task_dir = _get_task_dir(args, args.task_id)
+    queue_file = task_dir / 'question-queue.json'
+
+    if not queue_file.exists():
+        print(f'질문 큐가 없습니다: {args.task_id}')
+        return 0
+
+    try:
+        data = json.loads(queue_file.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f'오류: 큐 파일 읽기 실패: {e}', file=sys.stderr)
+        return 1
+
+    questions = data.get('questions', [])
+    if not questions:
+        print('질문이 없습니다.')
+        return 0
+
+    show_all = getattr(args, 'all', False)
+
+    type_icons = {
+        'permission': 'PERM',
+        'checkpoint': 'CHKP',
+        'error': 'ERR ',
+        'decision': 'DCSN',
+    }
+    status_icons = {
+        'pending': '*대기*',
+        'answered': ' 완료 ',
+        'expired': ' 만료 ',
+        'cancelled': ' 취소 ',
+    }
+
+    pending_count = sum(1 for q in questions if q.get('status') == 'pending')
+    print(f'태스크: {args.task_id}  |  대기 중: {pending_count}개')
+    print()
+    print(f'{"ID":<14} {"타입":<6} {"상태":<8} {"출처":<16} {"제목"}')
+    print('-' * 70)
+
+    for q in questions:
+        status = q.get('status', 'pending')
+        if not show_all and status != 'pending':
+            continue
+
+        qid = q.get('id', '?')
+        qtype = type_icons.get(q.get('type', ''), '????')
+        status_display = status_icons.get(status, status)
+        source = q.get('source', '')[:15]
+        title = q.get('title', '')[:30]
+
+        print(f'{qid:<14} {qtype:<6} {status_display:<8} {source:<16} {title}')
+
+    if pending_count > 0:
+        print()
+        print('답변하려면:')
+        print(f'  multi-agent-dev answer {args.task_id} <질문ID> <응답>')
+
+    return 0
+
+
+def cmd_answer(args):
+    """질문에 답변한다."""
+    task_dir = _get_task_dir(args, args.task_id)
+    queue_file = task_dir / 'question-queue.json'
+
+    if not queue_file.exists():
+        print(f'오류: 질문 큐가 없습니다: {args.task_id}', file=sys.stderr)
+        return 1
+
+    try:
+        data = json.loads(queue_file.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f'오류: 큐 파일 읽기 실패: {e}', file=sys.stderr)
+        return 1
+
+    questions = data.get('questions', [])
+    found = False
+
+    for q in questions:
+        if q.get('id') == args.question_id:
+            if q.get('status') != 'pending':
+                print(f'오류: 이미 처리된 질문입니다 (상태: {q.get("status")})', file=sys.stderr)
+                return 1
+
+            q['answer'] = args.response
+            q['answered_at'] = datetime.now().isoformat()
+            q['status'] = 'answered'
+            found = True
+            break
+
+    if not found:
+        print(f'오류: 질문을 찾을 수 없습니다: {args.question_id}', file=sys.stderr)
+        return 1
+
+    # 파일에 답변 저장
+    atomic_write(queue_file, data)
+    print(f'[ANSWERED] {args.question_id} → {args.response}')
     return 0
 
 

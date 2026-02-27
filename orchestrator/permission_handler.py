@@ -69,15 +69,18 @@ class PermissionHandler:
         rules: List[PermissionRule],
         notifier=None,
         ask_timeout: float = 300.0,
+        question_queue=None,
     ):
         """
         Args:
             rules: 권한 규칙 목록 (평가 순서: deny → allow → ask)
             notifier: SystemNotifier 인스턴스 (사용자 알림용)
             ask_timeout: 사용자 응답 대기 시간 (초)
+            question_queue: QuestionQueue 인스턴스 (있으면 큐 경유, 없으면 파일 기반)
         """
         self.notifier = notifier
         self.ask_timeout = ask_timeout
+        self.question_queue = question_queue
 
         # 규칙을 action별로 분류 (평가 순서 보장)
         self._deny_rules = [r for r in rules if r.action == 'deny']
@@ -126,12 +129,10 @@ class PermissionHandler:
         tool_input: dict,
         working_dir: Path,
     ) -> str:
-        """파일 기반 사용자 승인 요청.
+        """사용자 승인 요청.
 
-        1. permission-request.json 작성
-        2. OS 알림 전송
-        3. permission-decision.json 대기 (폴링)
-        4. 결정 반환
+        QuestionQueue가 설정되어 있으면 큐를 경유하고,
+        없으면 기존 파일 기반 방식을 사용한다.
 
         Args:
             tool_name: 도구 이름
@@ -142,6 +143,52 @@ class PermissionHandler:
             "allow" | "deny"
         """
         argument = self._extract_argument(tool_name, tool_input)
+
+        # QuestionQueue 경유 경로
+        if self.question_queue:
+            return self._request_via_queue(tool_name, argument, tool_input)
+
+        # 기존 파일 기반 경로
+        return self._request_via_file(tool_name, argument, tool_input, working_dir)
+
+    def _request_via_queue(
+        self,
+        tool_name: str,
+        argument: str,
+        tool_input: dict,
+    ) -> str:
+        """QuestionQueue를 통한 사용자 승인 요청."""
+        from .queue.models import Question, QuestionType
+
+        input_preview = json.dumps(tool_input, ensure_ascii=False)
+        if len(input_preview) > 500:
+            input_preview = input_preview[:500] + '...'
+
+        q = Question(
+            type=QuestionType.PERMISSION,
+            source=f"executor",
+            phase="execution",
+            title=f"{tool_name} 도구 사용 승인",
+            detail=f"인자: {argument}\n입력: {input_preview}",
+            options=["allow", "deny"],
+            default="deny",
+            timeout=self.ask_timeout,
+        )
+        answer = self.question_queue.ask(q)
+        decision = answer.response
+        if decision not in ('allow', 'deny'):
+            logger.warning(f"Invalid decision '{decision}', defaulting to DENY")
+            return 'deny'
+        return decision
+
+    def _request_via_file(
+        self,
+        tool_name: str,
+        argument: str,
+        tool_input: dict,
+        working_dir: Path,
+    ) -> str:
+        """기존 파일 기반 사용자 승인 요청."""
         request_file = working_dir / 'permission-request.json'
         decision_file = working_dir / 'permission-decision.json'
 

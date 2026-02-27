@@ -2,5 +2,8 @@
 pyyaml>=6.0
 watchdog>=3.0.0
 
+# TUI dashboard (optional)
+textual>=0.40.0
+
 # Optional: for enhanced functionality
 # colorlog>=6.7.0  # Colored logging

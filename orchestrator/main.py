@@ -70,13 +70,24 @@ class Orchestrator:
     사용자가 수동으로 원하는 브랜치를 선택하여 머지
     """
 
-    def __init__(self, config_path: Path, config_overrides: dict = None):
+    def __init__(
+        self,
+        config_path: Path,
+        config_overrides: dict = None,
+        question_queue=None,
+        on_question_callback=None,
+    ):
         """
         Args:
             config_path: config.yaml 경로
             config_overrides: config 값을 덮어쓸 딕셔너리.
                 예: {'project': {'target_repo': '...', 'default_branch': '...'}}
+            question_queue: QuestionQueue 인스턴스 (외부에서 생성된 경우)
+            on_question_callback: 새 질문 콜백 (TUI 모드에서 사용).
+                question_queue가 없으면 run_from_spec에서 QuestionQueue 생성 시 사용.
         """
+        self.question_queue = question_queue
+        self._on_question_callback = on_question_callback
         self.config = self._load_config(config_path)
 
         # config_overrides 적용 (중첩 딕셔너리 병합)
@@ -109,10 +120,14 @@ class Orchestrator:
 
         # 권한 핸들러 (config에 permissions 섹션이 있으면 사용, 없으면 executor 기본값)
         permission_config = self.config.get('permissions', {})
-        permission_handler = PermissionHandler.from_config(
-            permission_config,
-            notifier=self.notifier,
-        ) if permission_config else None
+        if permission_config:
+            permission_handler = PermissionHandler.from_config(
+                permission_config,
+                notifier=self.notifier,
+            )
+            permission_handler.question_queue = self.question_queue
+        else:
+            permission_handler = None
 
         # Claude 실행기 (stream-json 모드, permission_handler 없으면 기본 규칙 적용)
         self.executor = ClaudeExecutor(
@@ -167,6 +182,16 @@ class Orchestrator:
         task_id = self._generate_task_id()
         task_dir = self.workspace_root / 'tasks' / task_id
         task_dir.mkdir(parents=True, exist_ok=True)
+
+        # QuestionQueue lazy init (task_dir이 확정된 후)
+        if self.question_queue is None and self._on_question_callback:
+            from .queue import QuestionQueue
+            self.question_queue = QuestionQueue(
+                task_dir, on_question=self._on_question_callback
+            )
+            # PermissionHandler에도 큐 전달
+            if hasattr(self.executor, 'permission_handler') and self.executor.permission_handler:
+                self.executor.permission_handler.question_queue = self.question_queue
 
         # 기획서를 task 디렉토리에 복사
         spec_copy = task_dir / 'planning-spec.md'
@@ -1153,7 +1178,86 @@ class Orchestrator:
         checkpoint_name: str,
         timeout: int = 3600
     ) -> Optional[Dict[str, Any]]:
-        """체크포인트 결정 파일을 폴링으로 대기한다."""
+        """체크포인트 결정을 대기한다.
+
+        QuestionQueue가 설정되어 있으면 큐를 경유하고,
+        없으면 기존 파일 기반 방식을 사용한다.
+        """
+        # QuestionQueue 경유 경로
+        if self.question_queue:
+            return self._wait_for_checkpoint_via_queue(
+                task_dir, checkpoint_name, timeout
+            )
+
+        # 기존 파일 기반 경로
+        return self._wait_for_checkpoint_via_file(
+            task_dir, checkpoint_name, timeout
+        )
+
+    def _wait_for_checkpoint_via_queue(
+        self,
+        task_dir: Path,
+        checkpoint_name: str,
+        timeout: int = 3600
+    ) -> Optional[Dict[str, Any]]:
+        """QuestionQueue를 통한 체크포인트 대기."""
+        from .queue.models import Question, QuestionType
+
+        self.logger.info(
+            f"체크포인트 '{checkpoint_name}': "
+            f"큐를 통해 승인 대기 중"
+        )
+
+        q = Question(
+            type=QuestionType.CHECKPOINT,
+            source="orchestrator",
+            phase="checkpoint",
+            title=f"체크포인트: {checkpoint_name}",
+            detail=(
+                "approve: 승인하여 다음 단계로 진행\n"
+                "revise: 수정 요청 (피드백 포함)\n"
+                "abort: 파이프라인 중단"
+            ),
+            options=["approve", "revise", "abort"],
+            timeout=float(timeout),
+        )
+
+        answer = self.question_queue.ask(q)
+        response = answer.response
+
+        self.logger.info(f"체크포인트 결정: {response}")
+
+        # 기존 형식과 호환되는 딕셔너리 반환
+        result = {
+            'action': response,
+            'task_id': task_dir.name,
+        }
+
+        # "revise:피드백 내용" 형식 지원
+        if response.startswith('revise:'):
+            result['action'] = 'revise'
+            result['feedback'] = response[len('revise:'):]
+
+        # "approve:1,2" 형식 지원 (approach 필터링)
+        if response.startswith('approve:'):
+            result['action'] = 'approve'
+            try:
+                ids = response[len('approve:'):]
+                result['approved_approaches'] = [
+                    int(x.strip()) for x in ids.split(',')
+                ]
+            except ValueError:
+                pass
+
+        return result
+
+    def _wait_for_checkpoint_via_file(
+        self,
+        task_dir: Path,
+        checkpoint_name: str,
+        timeout: int = 3600
+    ) -> Optional[Dict[str, Any]]:
+        """기존 파일 기반 체크포인트 대기."""
         decision_file = task_dir / 'checkpoint-decision.json'
 
         self.logger.info(
