@@ -213,3 +213,20 @@ class SystemNotifier:
             subtitle="Pipeline Stopped",
             sound_name="Sosumi"
         )
+
+    def notify_permission_needed(self, tool_name: str, tool_argument: str) -> bool:
+        """도구 실행 권한 승인이 필요할 때 알림.
+
+        Args:
+            tool_name: 도구 이름 (e.g., "Bash")
+            tool_argument: 도구 인자 (e.g., "npm install")
+
+        Returns:
+            True if notification was sent
+        """
+        return self.notify(
+            title="Multi-Agent Pipeline - 권한 승인 필요",
+            message=f"{tool_name}: {tool_argument[:80]}",
+            subtitle="permission-decision.json에 응답해주세요",
+            sound_name="Ping"
+        )

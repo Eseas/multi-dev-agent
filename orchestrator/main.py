@@ -20,6 +20,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from .executor import ClaudeExecutor
+from .permission_handler import PermissionHandler
 from .watcher import FileWaitHelper
 from .utils import (
     atomic_write,
@@ -90,10 +91,26 @@ class Orchestrator:
             level=logging.INFO
         )
 
-        # Claude 실행기
+        # 알림 (executor, permission_handler보다 먼저 초기화)
+        notification_config = self.config.get('notifications', {})
+        self.notifier = SystemNotifier(
+            enabled=notification_config.get('enabled', True),
+            sound=notification_config.get('sound', True)
+        )
+
+        # 권한 핸들러 (config에 permissions 섹션이 있으면 사용, 없으면 executor 기본값)
+        permission_config = self.config.get('permissions', {})
+        permission_handler = PermissionHandler.from_config(
+            permission_config,
+            notifier=self.notifier,
+        ) if permission_config else None
+
+        # Claude 실행기 (stream-json 모드, permission_handler 없으면 기본 규칙 적용)
         self.executor = ClaudeExecutor(
             timeout=self.config['execution']['timeout'],
-            max_retries=self.config['execution']['max_retries']
+            max_retries=self.config['execution']['max_retries'],
+            permission_handler=permission_handler,
+            notifier=self.notifier,
         )
 
         # Git 관리자 (projects 레지스트리에서 resolve)
@@ -107,13 +124,6 @@ class Orchestrator:
             target_repo=target_repo,
             default_branch=default_branch,
             github_token=github_token
-        )
-
-        # 알림
-        notification_config = self.config.get('notifications', {})
-        self.notifier = SystemNotifier(
-            enabled=notification_config.get('enabled', True),
-            sound=notification_config.get('sound', True)
         )
 
         # 파이프라인 설정
