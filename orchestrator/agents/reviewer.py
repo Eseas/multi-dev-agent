@@ -48,6 +48,7 @@ class ReviewerAgent(BaseAgent):
         """
         impl_path = context.get('impl_path')
         approach = context.get('approach', {})
+        impl_context = context.get('impl_context', '')
 
         if not impl_path or not Path(impl_path).exists():
             return {
@@ -61,8 +62,9 @@ class ReviewerAgent(BaseAgent):
         approach_name = approach.get('name', 'Unknown')
         prompt = self.load_prompt(
             self.prompt_file,
-            impl_dir=impl_path,  # reviewer.md uses {impl_dir}
-            approach_name=approach_name  # reviewer.md uses {approach_name}
+            impl_dir=impl_path,
+            approach_name=approach_name,
+            impl_context=impl_context,
         )
 
         # Execute review

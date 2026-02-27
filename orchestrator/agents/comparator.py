@@ -39,6 +39,9 @@ class ComparatorAgent(BaseAgent):
             Dict with comparison results and rankings
         """
         implementations = context.get('implementations', [])
+        phase3_inline = context.get('phase3_inline', '')
+        phase3_summary_path = context.get('phase3_summary_path', '')
+        task_dir = context.get('task_dir', '')
 
         if not implementations:
             return {
@@ -58,7 +61,10 @@ class ComparatorAgent(BaseAgent):
         prompt = self.load_prompt(
             self.prompt_file,
             num_implementations=len(implementations),
-            comparison_data=comparison_text
+            comparison_data=comparison_text,
+            phase3_inline=phase3_inline,
+            phase3_summary_path=phase3_summary_path,
+            task_dir=task_dir,
         )
 
         # Execute comparison
@@ -182,7 +188,11 @@ class ComparatorAgent(BaseAgent):
                     lines.append(f"Description: {approach['description']}")
 
             if 'review' in impl:
-                lines.append(f"\n### Code Review\n{impl['review'][:500]}...")
+                review_text = impl['review']
+                # 1,500자까지 포함 (pre-computed metrics가 주요 데이터 소스)
+                if len(review_text) > 1500:
+                    review_text = review_text[:1500] + '\n\n... (전체 리뷰는 review.md 참조)'
+                lines.append(f"\n### Code Review\n{review_text}")
 
             if 'test_results' in impl:
                 lines.append(f"\n### Test Results\n{impl['test_results']}")

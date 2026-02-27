@@ -18,6 +18,12 @@
 **프로젝트 컨텍스트 파일**: `{project_context_path}`
 위 파일을 Read 도구로 읽어서 프로젝트의 구조, 기술 스택, 코딩 스타일을 파악하세요.
 
+## Architect 분석 컨텍스트
+
+{architect_context}
+
+상세 설계 분석은 `{architect_summary_path}` 파일을 Read 도구로 참조하세요.
+
 ---
 
 # ⚠️ 중요: 반드시 파일을 작성하세요!

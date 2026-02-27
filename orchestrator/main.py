@@ -33,6 +33,15 @@ from .utils import (
     write_validation_errors,
     ProjectAnalyzer,
 )
+from .utils.context_builder import (
+    build_architect_inline_context,
+    build_architect_summary_file,
+    build_implementer_inline_context,
+    build_review_metrics,
+    build_test_metrics,
+    build_phase3_summary,
+    format_phase3_inline,
+)
 from .agents import (
     ArchitectAgent,
     ImplementerAgent,
@@ -327,6 +336,19 @@ class Orchestrator:
             )
             self.notifier.notify_stage_completed("Phase 1: Architect")
 
+            # Architect → Implementer 컨텍스트 생성 (Tier 1 + Tier 2)
+            approaches_data = {'approaches': approaches}
+            architect_inline = build_architect_inline_context(approaches_data)
+            architect_summary = build_architect_summary_file(approaches_data)
+            architect_summary_path = str(
+                (architect_workspace / 'architect-summary.md').resolve()
+            )
+            atomic_write(architect_summary_path, architect_summary)
+            self.logger.debug(
+                f"Architect context 생성 완료 "
+                f"(inline={len(architect_inline)}자)"
+            )
+
             # === Phase 1 Checkpoint ===
             if self.checkpoint_enabled:
                 self._log_timeline(
@@ -380,6 +402,16 @@ class Orchestrator:
                             'error': '승인된 접근법이 없습니다'
                         }
 
+                    # 필터링된 approaches로 architect context 재생성
+                    approaches_data = {'approaches': approaches}
+                    architect_inline = build_architect_inline_context(
+                        approaches_data
+                    )
+                    architect_summary = build_architect_summary_file(
+                        approaches_data
+                    )
+                    atomic_write(architect_summary_path, architect_summary)
+
                 self._log_timeline(
                     timeline_file, "CHECKPOINT",
                     f"approved (approaches={len(approaches)})"
@@ -398,6 +430,8 @@ class Orchestrator:
                 task_id, approaches, spec_content, project_context_path,
                 pipeline_mode=pipeline_mode,
                 api_contract_path=api_contract_path,
+                architect_inline=architect_inline,
+                architect_summary_path=architect_summary_path,
             )
 
             manifest['phases']['phase2'] = {
@@ -509,6 +543,8 @@ class Orchestrator:
         project_context_path: str = '',
         pipeline_mode: str = 'alternative',
         api_contract_path: str = '',
+        architect_inline: str = '',
+        architect_summary_path: str = '',
     ) -> List[Dict[str, Any]]:
         """N개 Implementer를 병렬로 실행한다."""
         if len(approaches) == 1:
@@ -519,6 +555,8 @@ class Orchestrator:
                     spec_content, project_context_path,
                     pipeline_mode=pipeline_mode,
                     api_contract_path=api_contract_path,
+                    architect_inline=architect_inline,
+                    architect_summary_path=architect_summary_path,
                 )
             ]
 
@@ -533,6 +571,8 @@ class Orchestrator:
                     spec_content, project_context_path,
                     pipeline_mode=pipeline_mode,
                     api_contract_path=api_contract_path,
+                    architect_inline=architect_inline,
+                    architect_summary_path=architect_summary_path,
                 )
                 future_to_idx[future] = i - 1
 
@@ -563,6 +603,8 @@ class Orchestrator:
         project_context_path: str = '',
         pipeline_mode: str = 'alternative',
         api_contract_path: str = '',
+        architect_inline: str = '',
+        architect_summary_path: str = '',
     ) -> Dict[str, Any]:
         """단일 Implementer를 실행한다."""
         worktree_path = self.git_manager.create_worktree(task_id, impl_id)
@@ -586,6 +628,8 @@ class Orchestrator:
             'project_context_path': project_context_path,
             'pipeline_mode': pipeline_mode,
             'api_contract_path': api_contract_path,
+            'architect_context': architect_inline,
+            'architect_summary_path': architect_summary_path,
         })
 
         change_summary = {}
@@ -647,6 +691,11 @@ class Orchestrator:
         approach_id = impl['approach_id']
         impl_path = impl['worktree_path']
 
+        # Implementer → Reviewer/Tester 컨텍스트 생성
+        impl_context = build_implementer_inline_context(
+            Path(impl_path), impl.get('change_summary', {})
+        )
+
         # Reviewer
         if self.enable_review:
             reviewer_prompt = self.prompts_dir / 'reviewer.md'
@@ -659,7 +708,8 @@ class Orchestrator:
             )
             review_result = reviewer.run({
                 'impl_path': impl_path,
-                'approach': impl.get('approach', {})  # approach 정보 전달
+                'approach': impl.get('approach', {}),
+                'impl_context': impl_context,
             })
             impl['review_success'] = review_result['success']
             impl['review_workspace'] = str(review_workspace)
@@ -679,7 +729,8 @@ class Orchestrator:
             )
             test_result = tester.run({
                 'impl_path': impl_path,
-                'approach': impl.get('approach', {})  # approach 정보 전달
+                'approach': impl.get('approach', {}),
+                'impl_context': impl_context,
             })
             impl['test_success'] = test_result['success']
             impl['test_workspace'] = str(test_workspace)
@@ -828,6 +879,12 @@ class Orchestrator:
             prompt_file=self.prompts_dir / 'comparator.md'
         )
 
+        # Phase 3 메트릭 사전 계산 (Tier 1 + Tier 2)
+        phase3_summary = build_phase3_summary(successful_impls, task_dir)
+        phase3_summary_path = str(task_dir / 'phase3-summary.json')
+        atomic_write(phase3_summary_path, phase3_summary)
+        phase3_inline = format_phase3_inline(phase3_summary)
+
         comp_context = {
             'implementations': [
                 {
@@ -839,7 +896,9 @@ class Orchestrator:
                 }
                 for r in successful_impls
             ],
-            'task_dir': str(task_dir)
+            'task_dir': str(task_dir),
+            'phase3_inline': phase3_inline,
+            'phase3_summary_path': phase3_summary_path,
         }
 
         comp_result = comparator.run(comp_context)
@@ -881,15 +940,27 @@ class Orchestrator:
         impl: Dict[str, Any]
     ) -> Dict[str, Any]:
         """N=1일 때 단일 구현 요약을 생성한다."""
-        return {
+        summary = {
             'status': 'single_implementation',
             'approach_id': impl['approach_id'],
             'approach_name': impl['approach'].get('name', ''),
             'branch': impl['branch'],
             'worktree_path': impl['worktree_path'],
             'review_success': impl.get('review_success'),
-            'test_success': impl.get('test_success')
+            'test_success': impl.get('test_success'),
         }
+
+        # 리뷰 메트릭 보강
+        review_ws = impl.get('review_workspace', '')
+        if review_ws:
+            summary['review_metrics'] = build_review_metrics(Path(review_ws))
+
+        # 테스트 메트릭 보강
+        test_ws = impl.get('test_workspace', '')
+        if test_ws:
+            summary['test_metrics'] = build_test_metrics(Path(test_ws))
+
+        return summary
 
     def _save_final_evaluation(
         self,

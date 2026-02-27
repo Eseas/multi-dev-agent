@@ -9,6 +9,12 @@
 **디렉토리**: {impl_dir}
 **접근법**: {approach_name}
 
+## 구현 컨텍스트
+
+{impl_context}
+
+상세 구현 내용은 `{impl_dir}/work-done.md`를 Read 도구로 참조하세요.
+
 ---
 
 ## 리뷰 관점

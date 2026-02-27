@@ -50,6 +50,8 @@ class ImplementerAgent(BaseAgent):
         project_context_path = context.get('project_context_path', '')
         pipeline_mode = context.get('pipeline_mode', 'alternative')
         api_contract_path = context.get('api_contract_path', '')
+        architect_context = context.get('architect_context', '')
+        architect_summary_path = context.get('architect_summary_path', '')
 
         if not approach:
             return {
@@ -71,6 +73,8 @@ class ImplementerAgent(BaseAgent):
             project_context_path=project_context_path,
             pipeline_mode=pipeline_mode,
             api_contract_path=api_contract_path,
+            architect_context=architect_context,
+            architect_summary_path=architect_summary_path,
         )
 
         # Claude 실행 (git worktree = 타겟 프로젝트 내부에서)
