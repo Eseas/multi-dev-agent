@@ -14,11 +14,17 @@
 ```
 project/
 ├── orchestrator/          # 메인 오케스트레이터 시스템
-│   ├── main.py           # CLI 진입점
+│   ├── main.py           # Orchestrator 클래스 (파이프라인 전체 관리)
 │   ├── agents/           # 각 에이전트 구현
+│   ├── queue/            # 질문 큐 시스템 (thread-safe, file-backed)
+│   │   ├── models.py     #   Question, Answer, Enum 데이터 모델
+│   │   └── question_queue.py  # QuestionQueue 핵심 로직
+│   ├── tui/              # TUI 대시보드 (Textual 기반)
+│   │   ├── app.py        #   DashboardApp (메인 앱)
+│   │   └── widgets.py    #   커스텀 위젯
 │   ├── watcher.py        # 파일 감시
 │   ├── executor.py       # Claude Code 실행기
-│   ├── notifier.py       # 알림 시스템
+│   ├── permission_handler.py  # 도구 권한 관리 (큐 연동)
 │   └── utils/            # 유틸리티
 ├── workspace/
 │   ├── planning/         # 기획 단계
