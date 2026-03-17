@@ -276,6 +276,122 @@ def test_performance():
 
 ---
 
+## FE 프로젝트 테스트 (Playwright)
+
+프로젝트가 프론트엔드(React, Vue, Next.js, Svelte 등)인 경우, **Playwright를 사용한 E2E 테스트를 반드시 작성**하세요.
+
+### FE 프로젝트 감지 기준
+
+다음 중 하나라도 해당되면 FE 프로젝트로 판단:
+- `package.json`에 `react`, `vue`, `next`, `svelte`, `angular` 등 FE 프레임워크 의존성 존재
+- `.tsx`, `.jsx`, `.vue`, `.svelte` 파일 존재
+- `index.html` 또는 `public/` 디렉토리 존재
+
+### Playwright 설정
+
+```bash
+# 의존성 설치
+npm install -D @playwright/test
+npx playwright install --with-deps chromium
+```
+
+`playwright.config.ts` 생성:
+```typescript
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  timeout: 30000,
+  retries: 1,
+  use: {
+    baseURL: 'http://localhost:3000',
+    screenshot: 'only-on-failure',
+    trace: 'on-first-retry',
+  },
+  webServer: {
+    command: 'npm run dev',
+    port: 3000,
+    reuseExistingServer: true,
+    timeout: 60000,
+  },
+});
+```
+
+### Playwright 테스트 작성 원칙
+
+1. **사용자 관점**: 실제 사용자 플로우 기반으로 작성
+2. **안정적 셀렉터**: `data-testid`, `role`, `text` 기반 셀렉터 우선 사용 (`#id`, `.class` 지양)
+3. **독립적 테스트**: 각 테스트가 독립적으로 실행 가능해야 함
+4. **자동 대기**: Playwright의 auto-waiting 활용, 명시적 `waitForTimeout` 지양
+
+### 테스트 구조
+
+```
+tests/
+├── unit/                    # 컴포넌트 단위 테스트
+│   └── ...
+├── e2e/                     # Playwright E2E 테스트
+│   ├── navigation.spec.ts   # 페이지 이동 테스트
+│   ├── form.spec.ts         # 폼 상호작용 테스트
+│   └── critical-flow.spec.ts # 핵심 사용자 플로우
+└── conftest.py / fixtures/
+```
+
+### 테스트 예시
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('핵심 사용자 플로우', () => {
+  test('메인 페이지 로딩', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('h1')).toBeVisible();
+  });
+
+  test('폼 제출 동작', async ({ page }) => {
+    await page.goto('/form');
+    await page.getByLabel('이름').fill('테스트 사용자');
+    await page.getByRole('button', { name: '제출' }).click();
+    await expect(page.getByText('성공')).toBeVisible();
+  });
+
+  test('페이지 네비게이션', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('link', { name: '소개' }).click();
+    await expect(page).toHaveURL('/about');
+  });
+});
+```
+
+### Playwright 테스트 실행
+
+```bash
+# 전체 E2E 테스트 실행
+npx playwright test
+
+# UI 모드로 디버깅
+npx playwright test --ui
+
+# 특정 테스트만 실행
+npx playwright test tests/e2e/critical-flow.spec.ts
+```
+
+### FE 테스트 피라미드 (수정)
+
+```
+        /\
+       /E2E\        Playwright (핵심 플로우)
+      /------\
+     / 통합   \     컴포넌트 통합 테스트
+    /----------\
+   / 컴포넌트   \   React Testing Library 등
+  /--------------\
+ /    단위        \ 유틸 함수, 훅 테스트
+/------------------\
+```
+
+---
+
 ## 중요 지침
 
 1. **실제로 테스트 작성**: 프롬프트만 작성하지 말고 실제 테스트 코드 작성
