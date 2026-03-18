@@ -34,6 +34,7 @@ env/
 
 # Workspace (generated during pipeline execution)
 workspace/
+workspaces/
 
 # Logs
 *.log
