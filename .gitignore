@@ -47,3 +47,5 @@ config.yaml
 config.local.yaml
 decision.json
 /.claude/logs/
+
+.env
