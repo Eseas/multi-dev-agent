@@ -15,10 +15,14 @@ multi-agent-dev-system/           # 베이스 프로젝트 (이 저장소)
 ├── config.yaml                   # 시스템 설정
 │
 ├── workspaces/                   # 서비스별 워크스페이스
-│   ├── {service-name}/           # 하나의 서비스 = 하나의 워크스페이스
-│   │   ├── {service-name}-FE/    # 실제 GitHub 레포 (master branch clone)
-│   │   ├── {service-name}-BE/    # 실제 GitHub 레포 (master branch clone)
-│   │   ├── {service-name}-DB/    # 필요시 추가
+│   ├── {service-name}/                    # 하나의 서비스 = 하나의 워크스페이스
+│   │   ├── {service-name}-BE/             # 메인 API 서버 레포
+│   │   ├── {service-name}-BE-Admin/       # 관리자 API 레포 (분리된 경우)
+│   │   ├── {service-name}-BE-Worker/      # 배치/백그라운드 잡 레포 (분리된 경우)
+│   │   ├── {service-name}-FE-Web/         # 사용자용 웹 레포 (없으면 생략)
+│   │   ├── {service-name}-FE-Admin/       # 관리자 대시보드 웹 레포 (없으면 생략)
+│   │   ├── {service-name}-FE-App/         # 모바일 앱 레포 (없으면 생략)
+│   │   ├── {service-name}-Infra/          # IaC 레포 (없으면 생략)
 │   │   ├── planning/             # 이 서비스의 기획서들
 │   │   │   ├── in-progress/
 │   │   │   └── completed/

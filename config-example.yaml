@@ -12,12 +12,38 @@ workspaces:
     path: ./workspaces/my-service    # 이 서비스의 워크스페이스 경로
 
     projects:                        # 구성 레포지토리 목록
-      be:
+
+      # ── Backend ──────────────────────────────────────────────
+      be:                            # 메인 API 서버
         target_repo: "https://github.com/OrgName/MyService-BE.git"
         default_branch: "master"
-        github_token: "personal"     # github_tokens의 키 이름
-      fe:
-        target_repo: "https://github.com/OrgName/MyService-FE.git"
+        github_token: "personal"
+      be-admin:                      # 관리자 전용 API (규모가 커서 분리된 경우)
+        target_repo: "https://github.com/OrgName/MyService-BE-Admin.git"
+        default_branch: "master"
+        github_token: "personal"
+      be-worker:                     # 배치 / 백그라운드 잡 (별도 배포 주기)
+        target_repo: "https://github.com/OrgName/MyService-BE-Worker.git"
+        default_branch: "master"
+        github_token: "personal"
+
+      # ── Frontend ─────────────────────────────────────────────
+      fe-web:                        # 사용자용 웹 (Next.js / React 등)
+        target_repo: "https://github.com/OrgName/MyService-FE-Web.git"
+        default_branch: "main"
+        github_token: "personal"
+      fe-admin:                      # 관리자 대시보드 웹 (별도 레포인 경우)
+        target_repo: "https://github.com/OrgName/MyService-FE-Admin.git"
+        default_branch: "main"
+        github_token: "personal"
+      fe-app:                        # 모바일 앱 (Flutter / React Native 등)
+        target_repo: "https://github.com/OrgName/MyService-FE-App.git"
+        default_branch: "main"
+        github_token: "personal"
+
+      # ── Infrastructure ────────────────────────────────────────
+      infra:                         # IaC 레포 (Terraform / Pulumi / CDK 등)
+        target_repo: "https://github.com/OrgName/MyService-Infra.git"
         default_branch: "main"
         github_token: "personal"
 
