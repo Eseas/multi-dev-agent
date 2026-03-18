@@ -100,7 +100,7 @@ class Orchestrator:
                 else:
                     self.config[section] = values
 
-        self.workspace_root = Path(self.config['workspace']['root'])
+        self.workspace_root = Path(self._resolve_workspace_path())
         self.prompts_dir = Path(self.config['prompts']['directory'])
 
         # 로깅
@@ -1314,12 +1314,31 @@ class Orchestrator:
         with open(timeline_file, 'a') as f:
             f.write(line)
 
+    def _resolve_workspace_path(self) -> str:
+        """현재 활성 워크스페이스의 경로를 반환한다.
+
+        config_overrides로 'workspace' 키가 주어지면 해당 워크스페이스를 사용하고,
+        아니면 workspaces의 첫 번째 워크스페이스를 사용한다.
+
+        Returns:
+            워크스페이스 경로 문자열
+        """
+        workspaces = self.config.get('workspaces', {})
+        if not workspaces:
+            return './workspace'
+
+        workspace_name = self.config.get('workspace')
+        if workspace_name and isinstance(workspace_name, str) and workspace_name in workspaces:
+            return workspaces[workspace_name].get('path', './workspace')
+
+        first_name = next(iter(workspaces))
+        return workspaces[first_name].get('path', './workspace')
+
     def _resolve_active_project(self) -> Dict[str, Any]:
         """현재 활성 프로젝트 설정을 resolve한다.
 
         config_overrides로 'project' 섹션이 직접 주어지면 그것을 사용하고,
-        아니면 projects 레지스트리에서 첫 번째 프로젝트를 사용한다.
-        하위 호환: 기존 'project' 섹션도 지원한다.
+        아니면 workspaces 하위 프로젝트 레지스트리에서 첫 번째 프로젝트를 사용한다.
 
         Returns:
             프로젝트 설정 딕셔너리 (target_repo, default_branch, github_token)
@@ -1330,32 +1349,45 @@ class Orchestrator:
             if project_section.get('target_repo'):
                 return project_section
 
-        # projects 레지스트리에서 조회
-        projects = self.config.get('projects', {})
-        if projects:
-            # project 섹션에 이름만 있는 경우 (project: "dailyword")
+        # workspaces 레지스트리에서 조회
+        workspaces = self.config.get('workspaces', {})
+        if workspaces:
+            # project 섹션에 이름이 있는 경우 ("workspace/project" 또는 "project")
             if project_section and isinstance(project_section, str):
                 return self._resolve_project(project_section)
-            # 기본값: 첫 번째 프로젝트
-            first_name = next(iter(projects))
-            return projects[first_name]
+            # 기본값: 첫 번째 workspace의 첫 번째 project
+            first_workspace = next(iter(workspaces.values()))
+            projects = first_workspace.get('projects', {})
+            if projects:
+                first_project = next(iter(projects))
+                return projects[first_project]
 
-        # 아무것도 없으면 빈 설정 반환
         return {'target_repo': '', 'default_branch': 'main', 'github_token': ''}
 
     def _resolve_project(self, project_ref: str) -> Dict[str, Any]:
-        """projects 레지스트리에서 프로젝트를 resolve한다.
+        """workspaces 레지스트리에서 프로젝트를 resolve한다.
 
         Args:
-            project_ref: projects의 키 이름
+            project_ref: "workspace_name/project_name" 또는 "project_name" 형식.
+                         슬래시가 없으면 모든 workspace에서 project_name을 탐색한다.
 
         Returns:
             프로젝트 설정 딕셔너리 (target_repo, default_branch, github_token).
             찾지 못하면 빈 설정 반환.
         """
-        projects = self.config.get('projects', {})
-        if projects and project_ref in projects:
-            return projects[project_ref]
+        workspaces = self.config.get('workspaces', {})
+
+        if '/' in project_ref:
+            workspace_name, project_name = project_ref.split('/', 1)
+            projects = workspaces.get(workspace_name, {}).get('projects', {})
+            if project_name in projects:
+                return projects[project_name]
+        else:
+            for workspace in workspaces.values():
+                projects = workspace.get('projects', {})
+                if project_ref in projects:
+                    return projects[project_ref]
+
         logger.warning(f"프로젝트를 찾을 수 없습니다: {project_ref}")
         return {'target_repo': '', 'default_branch': 'main', 'github_token': ''}
 
@@ -1395,17 +1427,19 @@ class Orchestrator:
         import yaml
 
         default_config = {
-            'workspace': {
-                'root': './workspace'
-            },
             'github_tokens': {
                 'default': ''
             },
-            'projects': {
-                'my-project': {
-                    'target_repo': '',
-                    'default_branch': 'main',
-                    'github_token': 'default'
+            'workspaces': {
+                'my-service': {
+                    'path': './workspaces/my-service',
+                    'projects': {
+                        'be': {
+                            'target_repo': '',
+                            'default_branch': 'main',
+                            'github_token': 'default'
+                        }
+                    }
                 }
             },
             'prompts': {
@@ -1424,8 +1458,8 @@ class Orchestrator:
             'watch': {
                 'dirs': [
                     {
-                        'path': './workspace/planning/completed',
-                        'project': 'my-project',
+                        'workspace': 'my-service',
+                        'path': './workspaces/my-service/planning/completed',
                     }
                 ]
             },
