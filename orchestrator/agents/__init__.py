@@ -7,6 +7,7 @@ from .reviewer import ReviewerAgent
 from .tester import TesterAgent
 from .comparator import ComparatorAgent
 from .integrator import IntegratorAgent
+from .simplifier import SimplifierAgent
 
 __all__ = [
     'BaseAgent',
@@ -16,4 +17,5 @@ __all__ = [
     'TesterAgent',
     'ComparatorAgent',
     'IntegratorAgent',
+    'SimplifierAgent',
 ]

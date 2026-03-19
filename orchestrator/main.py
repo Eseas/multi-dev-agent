@@ -49,6 +49,7 @@ from .agents import (
     TesterAgent,
     ComparatorAgent,
     IntegratorAgent,
+    SimplifierAgent,
 )
 
 
@@ -168,6 +169,9 @@ class Orchestrator:
         )
         self.enable_test = self.config.get('pipeline', {}).get(
             'enable_test', True
+        )
+        self.enable_simplifier = self.config.get('pipeline', {}).get(
+            'enable_simplifier', True
         )
 
     def run_from_spec(self, spec_path: Path) -> Dict[str, Any]:
@@ -529,6 +533,13 @@ class Orchestrator:
             self._save_final_evaluation(
                 task_dir, evaluation_summary, successful_impls
             )
+
+            # === Phase 5: 간소화 리뷰 & 개발 근거 문서화 ===
+            if self.enable_simplifier:
+                self._run_phase5_simplifier(
+                    task_dir, timeline_file, manifest_file, manifest,
+                    evaluation_summary, successful_impls, spec_path
+                )
 
             # 완료
             self._update_manifest(manifest_file, manifest, 'completed')
@@ -987,6 +998,103 @@ class Orchestrator:
 
         return summary
 
+    def _run_phase5_simplifier(
+        self,
+        task_dir: Path,
+        timeline_file: Path,
+        manifest_file: Path,
+        manifest: Dict[str, Any],
+        evaluation_summary: Dict[str, Any],
+        successful_impls: List[Dict],
+        spec_path: Path,
+    ) -> None:
+        """Phase 5: 최종 구현에 대한 간소화 리뷰와 개발 근거 문서를 생성한다.
+
+        alternative 모드: 1위 구현(또는 N=1 단일 구현)에 대해 실행.
+        concern 모드: 통합된 구현 경로에 대해 실행.
+        각 결과는 task_dir/simplifier/impl-{id}/ 에 저장된다.
+        """
+        self._log_timeline(timeline_file, "PHASE", "simplifier_start")
+        self.notifier.notify_stage_completed("Phase 5: Simplifier (시작)")
+
+        architect_summary_path = str(
+            task_dir / 'architect' / 'architect-summary.md'
+        )
+        comparison_file = evaluation_summary.get('comparison_file')
+
+        # 분석할 구현 목록 결정
+        if evaluation_summary.get('status') == 'integrated':
+            # concern 모드: 통합 경로 하나만 분석
+            targets = [{
+                'approach_id': 0,
+                'impl_path': evaluation_summary.get('integration_path', ''),
+                'approach': {'name': '통합 구현'},
+            }]
+        elif evaluation_summary.get('rankings'):
+            # alternative 모드 (N≥2): 1위 구현만 분석
+            top_id = evaluation_summary['rankings'][0]
+            top_impl = next(
+                (r for r in successful_impls if r['approach_id'] == top_id),
+                successful_impls[0]
+            )
+            targets = [{
+                'approach_id': top_impl['approach_id'],
+                'impl_path': top_impl['worktree_path'],
+                'approach': top_impl.get('approach', {}),
+            }]
+        else:
+            # N=1: 단일 구현
+            impl = successful_impls[0]
+            targets = [{
+                'approach_id': impl['approach_id'],
+                'impl_path': impl['worktree_path'],
+                'approach': impl.get('approach', {}),
+            }]
+
+        phase5_results = []
+        for target in targets:
+            approach_id = target['approach_id']
+            simplifier_workspace = (
+                task_dir / 'simplifier' / f'impl-{approach_id}'
+            )
+            simplifier_workspace.mkdir(parents=True, exist_ok=True)
+
+            agent = SimplifierAgent(
+                approach_id=approach_id,
+                workspace=simplifier_workspace,
+                executor=self.executor,
+                prompt_file=self.prompts_dir / 'simplifier.md',
+            )
+
+            result = agent.run({
+                'impl_path': target['impl_path'],
+                'approach': target['approach'],
+                'spec_path': str(spec_path),
+                'architect_summary_path': architect_summary_path,
+                'comparison_file': comparison_file,
+            })
+
+            phase5_results.append(result)
+
+            if result['success']:
+                self.logger.info(
+                    f"Phase 5 완료 (impl-{approach_id}): "
+                    f"simplification-review.md, dev-rationale.md 생성"
+                )
+            else:
+                self.logger.warning(
+                    f"Phase 5 실패 (impl-{approach_id}): "
+                    f"{result.get('error')}"
+                )
+
+        manifest['phases']['phase5'] = {
+            'status': 'completed',
+            'results': phase5_results,
+        }
+        self._update_manifest(manifest_file, manifest, manifest['stage'])
+        self._log_timeline(timeline_file, "PHASE", "simplifier_done")
+        self.notifier.notify_stage_completed("Phase 5: Simplifier")
+
     def _save_final_evaluation(
         self,
         task_dir: Path,
@@ -1133,6 +1241,28 @@ class Orchestrator:
                 "   ```",
                 ""
             ])
+
+        # Phase 5 결과 링크 (생성된 경우)
+        simplifier_dir = task_dir / 'simplifier'
+        if simplifier_dir.exists():
+            simplification_files = list(
+                simplifier_dir.rglob('simplification-review.md')
+            )
+            rationale_files = list(
+                simplifier_dir.rglob('dev-rationale.md')
+            )
+            if simplification_files or rationale_files:
+                lines.extend([
+                    "---",
+                    "",
+                    "## Phase 5: 간소화 리뷰 & 개발 근거",
+                    "",
+                ])
+                for f in simplification_files:
+                    lines.append(f"- **간소화 리뷰**: `{f}`")
+                for f in rationale_files:
+                    lines.append(f"- **개발 근거 문서**: `{f}`")
+                lines.append("")
 
         result_file.write_text('\n'.join(lines), encoding='utf-8')
         self.logger.info(f"평가 결과 저장: {result_file}")
@@ -1453,7 +1583,8 @@ class Orchestrator:
                 'checkpoint_phase1': True,
                 'num_approaches': 1,
                 'enable_review': True,
-                'enable_test': True
+                'enable_test': True,
+                'enable_simplifier': True,
             },
             'watch': {
                 'dirs': [
