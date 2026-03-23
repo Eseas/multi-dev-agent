@@ -8,104 +8,158 @@
 ## 핵심 기능
 
 ### 1. 워크스페이스 관리
-- 등록된 워크스페이스 목록 관리
-- 각 워크스페이스의 root project 경로 파악
-- planning/completed/ 폴더 감시하여 신규 기획서 감지
+- `config.yaml`의 `workspaces` 레지스트리에서 서비스·프로젝트 정보 로드
+- `watch.dirs` 설정의 경로를 감시하여 신규 기획서 감지
+- 각 워크스페이스의 `planning/completed/` 폴더에 파일이 생기면 자동 실행
 
 ### 2. 파이프라인 실행
+
 ```
-감지 → Phase 1 → Phase 2 (×N 병렬) → Phase 3 → Phase 4 → Phase 5 → Phase 6
+Validation → Git Setup → Project Analysis
+→ Phase 1 (Architect)
+→ [Checkpoint]
+→ Phase 2 (Implementer × N, 병렬)
+→ Phase 3 (Reviewer + Tester × N, 병렬)
+→ Phase 4 (Comparator 또는 Integrator)
+→ [Simplifier]
+→ evaluation-result.md 생성
 ```
-- 각 Phase 시작/완료 시 상태 기록
-- Phase 실패 시 재시도 또는 중단 결정
-- N값은 기획서에서 추출하거나 자동 판단
+
+- Phase 2, 3은 `ThreadPoolExecutor`로 병렬 실행
+- 각 Phase 시작/완료 시 상태 기록 + 시스템 알림
+- Phase 실패 시 에러 로그 기록 후 중단
 
 ### 3. 상태 추적
-- `manifest.json`: 작업 메타데이터 (현재 Phase, N값, 시작시간 등)
-- `timeline.log`: 이벤트 타임라인
+- `manifest.json`: 작업 메타데이터 (현재 단계, N값, Phase 이력 등)
+- `timeline.log`: Phase 전환 타임라인
 - 파일 기반 상태 → 프로세스 재시작 시 복구 가능
 
-### 4. 알림
-- Phase 전환 시 알림 발송
-- 에러 발생 시 즉시 알림
-- 사용자 승인 필요 시 대기 + 알림
+### 4. 체크포인트 (Phase 1 후)
+- Architect 완료 후 `approaches.json` 생성
+- 파일 감시로 사용자 승인 신호 대기
+- CLI에서 `python3 cli.py approve <task-id>` 로 승인
+- N≥2인 경우 개별 approach 승인/반려 가능
 
 ## 실행 모드
 
-### 자동 모드
-- completed/ 폴더 감시
-- 기획서 감지 시 자동으로 파이프라인 시작
-- Phase 6 완료 후 사용자에게 결과 알림
+### 자동 모드 (Watch)
+```bash
+python3 cli.py watch
+```
+- `watch.dirs` 경로를 주기적으로 감시
+- 기획서 감지 시 해당 워크스페이스의 프로젝트 설정으로 자동 실행
 
-### 수동 모드
-- CLI 명령으로 특정 기획서 실행
-- 특정 Phase만 재실행 가능
-- 디버깅·테스트 용도
+### 수동 모드 (Run)
+```bash
+python3 cli.py run -s <planning-spec.md 경로> [--workspace <name>] [--project <name>]
+```
+- 특정 기획서를 직접 실행
+- `--workspace`, `--project`로 대상 프로젝트 명시 가능
+
+## config.yaml 스키마
+
+```yaml
+github_tokens:                         # 토큰 레지스트리 (키: 토큰값)
+  personal: "ghp_xxxxxxxxxxxx"
+  work: "ghp_yyyyyyyyyyyy"
+
+workspaces:                            # 서비스 레지스트리
+  my-service:                          #   서비스명
+    path: ./workspaces/my-service      #   워크스페이스 경로
+    projects:                          #   프로젝트(레포) 목록
+      be:                              #     프로젝트 키
+        target_repo: "https://github.com/user/my-service-BE.git"
+        default_branch: "main"
+        github_token: "personal"       #     github_tokens의 키 이름
+      fe:
+        target_repo: "https://github.com/user/my-service-FE.git"
+        default_branch: "main"
+        github_token: "personal"
+      new-module:
+        target_repo: ""               #     비워두면 신규 프로젝트 모드 (로컬 git init)
+        default_branch: "main"
+
+prompts:
+  directory: ./prompts                 # 에이전트 프롬프트 템플릿 경로
+
+execution:
+  timeout: 600                         # Claude 실행 타임아웃 (초)
+  max_retries: 3
+
+pipeline:
+  checkpoint_phase1: true              # Phase 1 후 체크포인트 활성화
+  num_approaches: 1                    # 기본 구현 개수 (기획서에서 오버라이드 가능)
+  enable_review: true                  # Phase 3: Reviewer 활성화
+  enable_test: true                    # Phase 3: Tester 활성화
+  enable_simplifier: true             # Simplifier 활성화
+
+watch:
+  dirs:
+    - workspace: "my-service"          # workspaces 키 이름
+      path: ./workspaces/my-service/planning/completed
+
+validation:
+  enabled: true
+  auto_revalidate: true
+  strict_mode: false                   # true이면 검증 실패 시 중단
+
+permissions:                           # Claude 도구 권한 규칙
+  allow:                               #   자동 허용
+    - "Read(*)"
+    - "Glob(*)"
+    - "Grep(*)"
+  deny:                                #   자동 거부
+    - "Bash(rm -rf *)"
+    - "Bash(sudo *)"
+  ask:                                 #   사용자 승인 필요
+    - "Bash(*)"
+    - "Write(*)"
+  ask_timeout: 300
+
+queue:
+  default_timeout: 3600               # 기본 질문 타임아웃 (초)
+  permission_timeout: 300             # 권한 질문 타임아웃
+  checkpoint_timeout: 3600           # 체크포인트 타임아웃
+
+notifications:
+  enabled: true
+  sound: true
+```
 
 ## manifest.json 스키마
 
 ```json
 {
   "task_id": "task-20260317-143000",
-  "service": "my-social-app",
-  "workspace_path": "workspaces/my-social-app",
-  "planning_spec": "planning/completed/add-notification/planning-spec.md",
-  "root_projects": [
-    "my-social-app-FE",
-    "my-social-app-BE"
-  ],
-  "n_implementations": 2,
-  "current_phase": "implementation",
-  "phase_history": [
-    {"phase": "architect", "status": "completed", "started": "...", "ended": "..."},
-    {"phase": "implementation", "status": "in_progress", "started": "..."}
-  ],
+  "spec_path": "workspaces/my-service/planning/completed/add-auth/planning-spec.md",
   "created_at": "2026-03-17T14:30:00",
-  "updated_at": "2026-03-17T14:35:00"
+  "updated_at": "2026-03-17T14:35:00",
+  "stage": "phase2_implementation",
+  "n_implementations": 2,
+  "pipeline_mode": "alternative",
+  "phases": {
+    "validation": { "status": "completed" },
+    "git_setup": { "status": "completed" },
+    "project_analysis": { "status": "completed" },
+    "phase1_architect": { "status": "completed", "approaches_count": 2 },
+    "phase2_implementation": { "status": "in_progress" },
+    "phase3_review_test": { "status": "pending" },
+    "phase4_compare": { "status": "pending" }
+  }
 }
 ```
 
 ## 에러 핸들링
 
 ### Phase 실패 시
-1. 에러 로그 기록 (timeline.log)
-2. 알림 발송
-3. manifest 상태 업데이트
-4. 설정에 따라 재시도 또는 대기
+1. 에러 로그 기록 (`timeline.log`)
+2. 시스템 알림 발송
+3. `manifest.json` 상태를 `failed`로 업데이트
+4. 파이프라인 중단 (재시도는 수동으로)
 
-### 에이전트 타임아웃
-- Phase별 타임아웃 설정 (config.yaml)
-- 타임아웃 시 에이전트 종료 + 에러 처리
+### Claude 실행 타임아웃
+- `execution.timeout` 초과 시 프로세스 종료 + 에러 처리
+- `execution.max_retries` 횟수만큼 자동 재시도 후 실패 처리
 
-## 설정 (config.yaml)
-
-```yaml
-orchestrator:
-  watch_interval: 5          # 기획서 감시 주기 (초)
-  max_retries: 2             # Phase 실패 시 재시도 횟수
-
-workspaces:
-  - name: my-social-app
-    path: workspaces/my-social-app
-    root_projects:
-      - my-social-app-FE
-      - my-social-app-BE
-
-agents:
-  architect:
-    timeout: 300              # 초
-  implementer:
-    timeout: 600
-  reviewer:
-    timeout: 300
-  tester:
-    timeout: 300
-  comparator:
-    timeout: 300
-  integrator:
-    timeout: 600
-
-notifications:
-  type: webhook              # webhook, slack, terminal
-  url: https://...
-```
+### 체크포인트 타임아웃
+- `queue.checkpoint_timeout` 초 동안 승인 없으면 파이프라인 중단

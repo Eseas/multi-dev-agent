@@ -76,9 +76,15 @@ class GitManager:
         auth_url += parsed.path
         return auth_url
 
+    @property
+    def is_new_project(self) -> bool:
+        """GitHub 레포 없이 새 프로젝트를 처음 만드는 경우."""
+        return not self.target_repo
+
     def ensure_clone(self) -> Path:
         """타겟 프로젝트가 clone되어 있는지 확인하고, 없으면 clone한다.
 
+        target_repo가 없으면 로컬 git 저장소를 초기화한다 (새 프로젝트).
         이미 clone되어 있으면 pull로 최신 상태 동기화
         (fetch + reset으로 working tree도 갱신).
 
@@ -88,11 +94,8 @@ class GitManager:
         Raises:
             GitError: clone 또는 pull 실패 시
         """
-        if not self.target_repo:
-            raise GitError(
-                "target_repo가 설정되지 않았습니다. "
-                "config.yaml의 project.target_repo를 설정해주세요."
-            )
+        if self.is_new_project:
+            return self._ensure_local_repo()
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -119,6 +122,30 @@ class GitManager:
                 'clone', auth_url, str(self.clone_dir)
             ])
 
+        return self.clone_dir
+
+    def _ensure_local_repo(self) -> Path:
+        """로컬 git 저장소를 초기화한다 (target_repo가 없는 새 프로젝트용).
+
+        이미 초기화되어 있으면 그대로 사용한다.
+
+        Returns:
+            로컬 저장소 디렉토리 경로
+        """
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.clone_dir.exists() and (self.clone_dir / '.git').exists():
+            logger.info(f"기존 로컬 저장소 사용: {self.clone_dir}")
+            return self.clone_dir
+
+        self.clone_dir.mkdir(parents=True, exist_ok=True)
+        self._run_git(['init'], cwd=self.clone_dir)
+        # worktree 생성을 위해 HEAD가 필요하므로 빈 초기 커밋 생성
+        self._run_git(
+            ['commit', '--allow-empty', '-m', 'initial (new project)'],
+            cwd=self.clone_dir
+        )
+        logger.info(f"새 로컬 저장소 초기화: {self.clone_dir}")
         return self.clone_dir
 
     def get_current_commit(self) -> str:
@@ -158,11 +185,14 @@ class GitManager:
 
         worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # 새 프로젝트는 origin이 없으므로 로컬 HEAD에서 분기
+        base_ref = 'HEAD' if self.is_new_project else f'origin/{self.default_branch}'
+
         logger.info(f"worktree 생성: {worktree_path} (branch: {branch_name})")
         self._run_git([
             'worktree', 'add', str(worktree_path.resolve()),  # 절대 경로로 변환
             '-b', branch_name,
-            f'origin/{self.default_branch}'
+            base_ref
         ], cwd=self.clone_dir)
 
         return worktree_path
@@ -222,11 +252,14 @@ class GitManager:
 
         worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # 새 프로젝트는 origin이 없으므로 로컬 HEAD에서 분기
+        base_ref = 'HEAD' if self.is_new_project else f'origin/{self.default_branch}'
+
         logger.info(f"통합 worktree 생성: {worktree_path} (branch: {branch_name})")
         self._run_git([
             'worktree', 'add', str(worktree_path.resolve()),
             '-b', branch_name,
-            f'origin/{self.default_branch}'
+            base_ref
         ], cwd=self.clone_dir)
 
         return worktree_path, branch_name
@@ -245,16 +278,24 @@ class GitManager:
                 - changed_files: 변경된 파일 목록
         """
         try:
+            # 새 프로젝트는 origin이 없으므로 empty tree와 비교
+            # 기존 프로젝트는 origin 브랜치와 비교
+            if self.is_new_project:
+                # git의 빈 트리 SHA (항상 고정)
+                base_ref = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+            else:
+                base_ref = f'origin/{self.default_branch}'
+
             # git diff --stat
             result = self._run_git(
-                ['diff', '--stat', f'origin/{self.default_branch}...HEAD'],
+                ['diff', '--stat', f'{base_ref}...HEAD'],
                 cwd=worktree_path,
                 capture=True
             )
 
             # 변경된 파일 목록
             files_result = self._run_git(
-                ['diff', '--name-only', f'origin/{self.default_branch}...HEAD'],
+                ['diff', '--name-only', f'{base_ref}...HEAD'],
                 cwd=worktree_path,
                 capture=True
             )
