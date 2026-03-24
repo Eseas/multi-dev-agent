@@ -132,7 +132,6 @@ class Orchestrator:
 
         # Claude 실행기 (stream-json 모드, permission_handler 없으면 기본 규칙 적용)
         self.executor = ClaudeExecutor(
-            timeout=self.config['execution']['timeout'],
             max_retries=self.config['execution']['max_retries'],
             permission_handler=permission_handler,
             notifier=self.notifier,

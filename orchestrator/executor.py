@@ -59,7 +59,6 @@ class ClaudeExecutor:
 
     def __init__(
         self,
-        timeout: int = 300,
         max_retries: int = 3,
         retry_delay: int = 5,
         permission_handler: 'PermissionHandler' = None,
@@ -72,13 +71,11 @@ class ClaudeExecutor:
         permission_handler가 없으면 기본 규칙(Read/Glob/Grep 허용, Bash ask)을 적용한다.
 
         Args:
-            timeout: Maximum execution time in seconds
             max_retries: Maximum number of retry attempts
             retry_delay: Delay between retries in seconds
             permission_handler: 권한 규칙 핸들러
             notifier: SystemNotifier 인스턴스 (권한 알림용)
         """
-        self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.notifier = notifier
@@ -125,7 +122,6 @@ class ClaudeExecutor:
 
         attempt = 0
         last_error = None
-        timeout_count = 0
 
         while attempt < self.max_retries:
             attempt += 1
@@ -184,34 +180,6 @@ class ClaudeExecutor:
                         'duration': duration
                     }
 
-                # 타임아웃 연속 발생 → 재시도해도 같은 결과
-                if 'timed out' in last_error.lower():
-                    timeout_count += 1
-                    if timeout_count >= 2:
-                        logger.error(
-                            f"연속 타임아웃 {timeout_count}회, "
-                            f"재시도 중단 (timeout={self.timeout}s 증가 필요)"
-                        )
-                        error_msg = (
-                            f'연속 타임아웃 {timeout_count}회. '
-                            f'config.yaml의 execution.timeout '
-                            f'(현재 {self.timeout}s)을 늘려주세요.'
-                        )
-                        # 대화 내역 저장 (디버깅용)
-                        self._save_transcript(
-                            prompt=prompt,
-                            output=f"[TIMEOUT] {error_msg}",
-                            working_dir=working_dir,
-                            success=False,
-                            duration=0,
-                            returncode=-1
-                        )
-                        return {
-                            'success': False,
-                            'output': '',
-                            'error': error_msg,
-                            'duration': 0
-                        }
 
             except Exception as e:
                 last_error = str(e)
@@ -303,20 +271,8 @@ class ClaudeExecutor:
 
             # 이벤트 루프
             processor = StreamEventProcessor()
-            deadline = time.time() + self.timeout
 
             for line in iter(process.stdout.readline, ''):
-                # 타임아웃 체크
-                if time.time() > deadline:
-                    process.kill()
-                    process.wait()
-                    accumulated = processor.get_accumulated_text()
-                    return {
-                        'success': False,
-                        'output': accumulated,
-                        'error': f'Execution timed out after {self.timeout} seconds',
-                    }
-
                 stripped = line.strip()
                 if not stripped:
                     continue
