@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Comparison",
+  "description": "Implementation comparison report by skill-comparator. Presented to the decision-maker.",
+  "type": "object",
+  "required": ["task_id", "created_at", "rankings", "criteria_scores", "scenarios", "recommendation"],
+  "properties": {
+
+    "task_id": {
+      "type": "string",
+      "pattern": "^task-[0-9]+$"
+    },
+
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+
+    "rankings": {
+      "type": "array",
+      "description": "Implementations ranked by total score",
+      "items": {
+        "type": "object",
+        "required": ["rank", "approach_id", "approach_name", "total_score", "one_liner"],
+        "properties": {
+          "rank": { "type": "integer" },
+          "approach_id": { "type": "integer" },
+          "approach_name": { "type": "string" },
+          "total_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "one_liner": {
+            "type": "string",
+            "description": "One-line summary of this implementation"
+          }
+        }
+      }
+    },
+
+    "criteria_scores": {
+      "type": "array",
+      "description": "Per-criterion breakdown for each implementation",
+      "items": {
+        "type": "object",
+        "required": ["criterion", "weight", "scores"],
+        "properties": {
+          "criterion": { "type": "string" },
+          "weight": {
+            "type": "number",
+            "description": "Weight as percentage (0-100)"
+          },
+          "scores": {
+            "type": "array",
+            "description": "Score per implementation (ordered by approach_id)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "approach_id": { "type": "integer" },
+                "score": { "type": "number" },
+                "comment": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "scenarios": {
+      "type": "array",
+      "description": "Scenario-based recommendations",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["name", "recommended_approach_id", "rationale"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Scenario name. e.g. 'Fast MVP launch', 'Long-term scalability'"
+          },
+          "recommended_approach_id": { "type": "integer" },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+
+    "recommendation": {
+      "type": "object",
+      "description": "Final recommendation",
+      "required": ["primary_approach_id", "rationale", "next_steps"],
+      "properties": {
+        "primary_approach_id": { "type": "integer" },
+        "rationale": {
+          "type": "string",
+          "description": "Why this is the recommended choice"
+        },
+        "caveats": {
+          "type": "string",
+          "description": "Things to watch out for with this choice"
+        },
+        "next_steps": {
+          "type": "array",
+          "description": "Concrete next steps after choosing this implementation",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

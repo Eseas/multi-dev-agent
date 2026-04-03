@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TestResults",
+  "description": "Test execution results by skill-tester. Input for skill-comparator.",
+  "type": "object",
+  "required": ["task_id", "approach_id", "approach_name", "created_at", "summary", "test_cases", "verdict"],
+  "properties": {
+
+    "task_id": {
+      "type": "string",
+      "pattern": "^task-[0-9]+$"
+    },
+
+    "approach_id": {
+      "type": "integer"
+    },
+
+    "approach_name": {
+      "type": "string"
+    },
+
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+
+    "summary": {
+      "type": "object",
+      "required": ["total", "passed", "failed"],
+      "properties": {
+        "total": { "type": "integer" },
+        "passed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "skipped": { "type": "integer" }
+      }
+    },
+
+    "coverage": {
+      "type": "object",
+      "description": "Code coverage metrics (if measurable)",
+      "properties": {
+        "line_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "branch_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "per_file": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string" },
+              "line_percent": { "type": "number" },
+              "branch_percent": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+
+    "test_cases": {
+      "type": "array",
+      "description": "Individual test case results",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "status"],
+        "properties": {
+          "name": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["unit", "integration", "e2e"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "skipped"]
+          },
+          "description": { "type": "string" },
+          "failure_reason": {
+            "type": "string",
+            "description": "Reason for failure (only if status is failed)"
+          },
+          "duration_ms": {
+            "type": "number",
+            "description": "Test execution time in milliseconds"
+          }
+        }
+      }
+    },
+
+    "bugs": {
+      "type": "array",
+      "description": "Bugs discovered during testing",
+      "items": {
+        "type": "object",
+        "required": ["severity", "title", "location", "reproduction"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor"]
+          },
+          "title": { "type": "string" },
+          "location": { "type": "string" },
+          "reproduction": { "type": "string" },
+          "expected": { "type": "string" },
+          "actual": { "type": "string" }
+        }
+      }
+    },
+
+    "untestable_areas": {
+      "type": "array",
+      "description": "Areas that could not be tested and why",
+      "items": {
+        "type": "object",
+        "properties": {
+          "area": { "type": "string" },
+          "reason": { "type": "string" },
+          "suggestion": { "type": "string" }
+        }
+      }
+    },
+
+    "raw_output": {
+      "type": "string",
+      "description": "Raw test runner output"
+    },
+
+    "verdict": {
+      "type": "string",
+      "enum": ["pass", "partial", "fail"],
+      "description": "pass: all tests pass / partial: some failures / fail: critical failures"
+    },
+
+    "quality_score": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 5,
+      "description": "Overall quality score from testing perspective"
+    }
+  }
+}

@@ -51,6 +51,7 @@ from .agents import (
     IntegratorAgent,
     SimplifierAgent,
 )
+from .agent_registry import AgentRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -172,6 +173,27 @@ class Orchestrator:
         self.enable_simplifier = self.config.get('pipeline', {}).get(
             'enable_simplifier', True
         )
+
+        # Agent Registry (skills + schemas integration)
+        skills_dir = Path(self.config.get('skills', {}).get('directory', './skills'))
+        schemas_dir = Path(self.config.get('schemas', {}).get('directory', './schemas'))
+        validation_mode = self.config.get('schemas', {}).get('validation_mode', 'warn')
+
+        try:
+            self.registry = AgentRegistry(
+                skills_dir=skills_dir,
+                schemas_dir=schemas_dir,
+                prompts_dir=self.prompts_dir,
+                validation_mode=validation_mode,
+            )
+            self.logger.info(
+                f"AgentRegistry initialized: "
+                f"{len(self.registry.list_agents())} agents, "
+                f"skills={skills_dir}, schemas={schemas_dir}"
+            )
+        except FileNotFoundError as e:
+            self.logger.warning(f"AgentRegistry init skipped: {e}")
+            self.registry = None
 
     def run_from_spec(self, spec_path: Path) -> Dict[str, Any]:
         """기획서 기반으로 전체 파이프라인을 실행한다.

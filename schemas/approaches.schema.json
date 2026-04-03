@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Approaches",
+  "description": "Implementation approaches designed by skill-architect. Input for skill-implementer.",
+  "type": "object",
+  "required": ["task_id", "created_at", "mode", "approaches"],
+  "properties": {
+
+    "task_id": {
+      "type": "string",
+      "pattern": "^task-[0-9]+$"
+    },
+
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+
+    "mode": {
+      "type": "string",
+      "enum": ["alternative", "concern"],
+      "description": "Pipeline mode. Determines whether approaches are alternatives or complementary concerns"
+    },
+
+    "approaches": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "description", "key_decisions", "libraries", "trade_offs", "complexity", "estimated_effort"],
+        "properties": {
+
+          "id": {
+            "type": "integer",
+            "description": "Approach index (1-based). Maps to impl-{id}"
+          },
+
+          "name": {
+            "type": "string",
+            "description": "Short name for this approach"
+          },
+
+          "concern": {
+            "type": "string",
+            "description": "[concern mode only] The concern this approach covers. e.g. frontend, backend"
+          },
+
+          "description": {
+            "type": "string",
+            "description": "Detailed description of this approach"
+          },
+
+          "key_decisions": {
+            "type": "array",
+            "description": "Major architectural/design decisions",
+            "items": { "type": "string" }
+          },
+
+          "libraries": {
+            "type": "array",
+            "description": "Libraries and tools to be used",
+            "items": { "type": "string" }
+          },
+
+          "trade_offs": {
+            "type": "array",
+            "description": "Pros and cons. Prefix with 'Pro:' or 'Con:'",
+            "items": { "type": "string" }
+          },
+
+          "complexity": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+          },
+
+          "estimated_effort": {
+            "type": "string",
+            "enum": ["small", "medium", "large"]
+          }
+        }
+      }
+    },
+
+    "api_contract": {
+      "type": "object",
+      "description": "[concern mode only] Shared API contract between concerns",
+      "properties": {
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["method", "path", "description"],
+            "properties": {
+              "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+              "path": { "type": "string" },
+              "description": { "type": "string" },
+              "request": { "type": "object" },
+              "response": { "type": "object" }
+            }
+          }
+        },
+        "shared_types": {
+          "type": "object",
+          "description": "Type definitions shared across concerns"
+        }
+      }
+    }
+  }
+}

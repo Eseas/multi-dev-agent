@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WorkDone",
+  "description": "Implementation completion report by skill-implementer. Input for skill-reviewer and skill-tester.",
+  "type": "object",
+  "required": ["task_id", "approach_id", "approach_name", "created_at", "summary", "files", "run_command"],
+  "properties": {
+
+    "task_id": {
+      "type": "string",
+      "pattern": "^task-[0-9]+$"
+    },
+
+    "approach_id": {
+      "type": "integer",
+      "description": "Which approach was implemented (1-based)"
+    },
+
+    "approach_name": {
+      "type": "string",
+      "description": "Name of the implemented approach"
+    },
+
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+
+    "summary": {
+      "type": "string",
+      "description": "3-5 sentence summary of what was implemented"
+    },
+
+    "files": {
+      "type": "array",
+      "description": "All files created or modified",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "action", "description"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative file path"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["created", "modified", "deleted"],
+            "description": "What was done to this file"
+          },
+          "description": {
+            "type": "string",
+            "description": "Brief description of this file's purpose"
+          }
+        }
+      }
+    },
+
+    "run_command": {
+      "type": "string",
+      "description": "Command to run/build the implementation"
+    },
+
+    "technical_decisions": {
+      "type": "array",
+      "description": "Key technical decisions made during implementation",
+      "items": { "type": "string" }
+    },
+
+    "known_limitations": {
+      "type": "array",
+      "description": "Known limitations or unimplemented parts",
+      "items": { "type": "string" }
+    },
+
+    "dependencies_added": {
+      "type": "array",
+      "description": "New dependencies added (library name and version)",
+      "items": { "type": "string" }
+    }
+  }
+}

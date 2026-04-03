@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Simplification",
+  "description": "Simplification review and design rationale by skill-simplifier.",
+  "type": "object",
+  "required": ["task_id", "approach_id", "approach_name", "created_at", "review", "rationale"],
+  "properties": {
+
+    "task_id": {
+      "type": "string",
+      "pattern": "^task-[0-9]+$"
+    },
+
+    "approach_id": {
+      "type": "integer"
+    },
+
+    "approach_name": {
+      "type": "string"
+    },
+
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+
+    "review": {
+      "type": "object",
+      "description": "Simplification review section",
+      "required": ["complexity_level", "recommendation", "suggestions"],
+      "properties": {
+
+        "complexity_level": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "Overall complexity assessment"
+        },
+
+        "recommendation": {
+          "type": "string",
+          "enum": ["recommended", "optional", "unnecessary"],
+          "description": "Whether simplification is recommended"
+        },
+
+        "estimated_reduction_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Estimated code reduction percentage"
+        },
+
+        "suggestions": {
+          "type": "array",
+          "description": "Simplification suggestions ordered by priority",
+          "items": {
+            "type": "object",
+            "required": ["priority", "title", "location", "problem", "suggested_code", "benefit"],
+            "properties": {
+              "priority": { "type": "integer", "minimum": 1 },
+              "title": { "type": "string" },
+              "location": { "type": "string", "description": "File path and line range" },
+              "problem": { "type": "string" },
+              "suggested_code": { "type": "string", "description": "Actual simplified code" },
+              "benefit": { "type": "string" }
+            }
+          }
+        },
+
+        "intentional_complexity": {
+          "type": "array",
+          "description": "Things that look complex but are necessary",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": { "type": "string" },
+              "justification": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "rationale": {
+      "type": "object",
+      "description": "Design rationale documentation",
+      "required": ["problem_statement", "design_decisions"],
+      "properties": {
+
+        "problem_statement": {
+          "type": "string",
+          "description": "What problem this code solves (1-3 lines)"
+        },
+
+        "design_decisions": {
+          "type": "array",
+          "description": "Key design decisions with reasoning",
+          "items": {
+            "type": "object",
+            "required": ["decision", "chosen", "reason"],
+            "properties": {
+              "decision": { "type": "string", "description": "What was decided" },
+              "chosen": { "type": "string", "description": "What was chosen" },
+              "reason": { "type": "string", "description": "Why this was chosen" },
+              "alternatives_considered": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "trade_off": { "type": "string" }
+            }
+          }
+        },
+
+        "modification_cautions": {
+          "type": "array",
+          "description": "Warnings for future developers modifying this code",
+          "items": { "type": "string" }
+        },
+
+        "known_limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}
