@@ -8,8 +8,8 @@
 | **skill-pm** | 0 | 파이프라인 구성 결정 | `requirements.json` | `execution-plan.json` | `execution-plan.schema.json` |
 | **skill-architect** | 1 | N개 구현 접근법 설계 | `requirements.json`, `execution-plan.json`, 프로젝트 코드 | `approaches.json` | `approaches.schema.json` |
 | **skill-implementer** x N | 2 | 각 접근법의 실제 코드 작성 | `approaches.json[i]`, 프로젝트 worktree | `work-done.json` + 코드 | `work-done.schema.json` |
-| **skill-reviewer** x N | 3 | 구현 코드 리뷰 | `impl-N/`, `work-done.json` | `review.json` | `review.schema.json` |
-| **skill-tester** x N | 3 | 테스트 작성 및 실행 | `impl-N/`, `work-done.json` | `test-results.json` | `test-results.schema.json` |
+| **skill-reviewer** x N | 3 | 구현 목표 달성 검증 | `impl-N/`, `work-done.json`, `planning-spec.md` | `review.json` | `review.schema.json` |
+| ~~**skill-tester** x N~~ | ~~3~~ | ~~테스트 작성 및 실행~~ (비활성화) | ~~`impl-N/`, `work-done.json`~~ | ~~`test-results.json`~~ | ~~`test-results.schema.json`~~ |
 | **skill-comparator** | 4 | 구현 비교 (alternative 모드) | 리뷰 + 테스트 결과 | `comparison.json` | `comparison.schema.json` |
 | **skill-integrator** | 4 | 구현 통합 (concern 모드) | impl 브랜치 + api-contract | `integration-report.json` | `integration-report.schema.json` |
 | **skill-simplifier** | 5 | 코드 간소화 + 설계 근거 문서화 | 구현 + 리뷰 결과 | `simplification.json` | `simplification.schema.json` |
@@ -119,21 +119,36 @@ description: >
 - `task-{id}/impl-N` 브랜치에 커밋
 - 출력: `work-done.json`
 
-### Phase 3: 리뷰 + 테스트 (병렬)
+### Phase 3: 목표 달성 리뷰 + 재시도
 
-**skill-reviewer** 5가지 관점으로 리뷰 (가중치):
-1. 코드 품질 (30%)
-2. 아키텍처 & 설계 (25%)
-3. 보안 (20%)
-4. 성능 (15%)
-5. 테스트 용이성 (10%)
+**skill-reviewer** 4가지 관점으로 목표 달성 검증 (가중치):
+1. 요구사항 충족도 (40%) — 기획서의 핵심 기능이 모두 구현되었는가
+2. 접근법 충실도 (25%) — 지정된 방법론/기술 스택을 따랐는가
+3. 성공 기준 달성 (20%) — 측정 가능한 성공 기준을 충족하는가
+4. 완성도 (15%) — 실행 가능한 상태인가, 미완성 부분은 없는가
 
-발견 사항: Critical / Major / Minor 분류.
+판정: 달성 / 부분 달성 / 미달성.
 
-**skill-tester** 테스트 작성 및 실행:
-- 테스트 피라미드: 단위(70%) > 통합(20%) > E2E(10%)
-- FE 프로젝트: Playwright E2E
-- 커버리지, 발견된 버그, 테스트 불가 영역 보고
+**재시도 메커니즘**:
+- 리뷰 결과가 `not_achieved` 또는 `partial`이면 자동 재구현
+- 이전 리뷰 피드백(review.md)을 Implementer에 전달하여 미달성 부분 보완
+- 기존 코드 위에서 수정 (처음부터 재작성하지 않음)
+- 최대 재시도 횟수: `pipeline.max_review_retries` (기본값: 1)
+- 재구현 후 다시 리뷰 → 달성 시 루프 종료
+
+```
+Phase 2 (구현) → Phase 3 (리뷰)
+                    ↓ 미달성?
+                  재구현 (리뷰 피드백 포함)
+                    ↓
+                  재리뷰
+                    ↓ 달성 or 최대 재시도?
+                  Phase 4로 진행
+```
+
+**skill-tester** (비활성화):
+- 현재 파이프라인에서 비활성화 상태
+- 코드와 프롬프트는 유지됨 (향후 재활성화 가능)
 
 ### Phase 4: 평가
 

@@ -68,8 +68,9 @@ execution:
 pipeline:
   checkpoint_phase1: true   # Phase 1 완료 후 사용자 확인
   num_approaches: 1         # 병렬 구현 개수 (1~3)
-  enable_review: true       # Phase 3 리뷰 활성화
-  enable_test: true         # Phase 3 테스트 활성화
+  enable_review: true       # Phase 3 목표 달성 리뷰 활성화
+  enable_test: true         # Phase 3 테스트 활성화 (현재 비활성화 상태)
+  max_review_retries: 1     # 목표 미달성 시 재구현 최대 횟수 (0=재시도 없음)
 
 # 기획서 완료 폴더 감시 설정
 watch:

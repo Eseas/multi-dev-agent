@@ -173,6 +173,9 @@ class Orchestrator:
         self.enable_simplifier = self.config.get('pipeline', {}).get(
             'enable_simplifier', True
         )
+        self.max_review_retries = self.config.get('pipeline', {}).get(
+            'max_review_retries', 1
+        )
 
         # Agent Registry (skills + schemas integration)
         skills_dir = Path(self.config.get('skills', {}).get('directory', './skills'))
@@ -498,22 +501,105 @@ class Orchestrator:
             self._log_timeline(timeline_file, "PHASE", "implementation_done")
             self.notifier.notify_stage_completed("Phase 2: Implementation")
 
-            # === Phase 3: Review & Test (병렬) ===
-            if self.enable_review or self.enable_test:
-                self.logger.info("Phase 3: Review & Test 시작")
-                self.notifier.notify_stage_started("Phase 3: Review & Test")
+            # === Phase 3: 목표 달성 리뷰 + 재시도 루프 ===
+            if self.enable_review:
+                for retry_round in range(self.max_review_retries + 1):
+                    is_retry = retry_round > 0
+                    round_label = (
+                        f" (재시도 {retry_round}/{self.max_review_retries})"
+                        if is_retry else ""
+                    )
 
-                self._log_timeline(timeline_file, "PHASE", "review_test_start")
-                self._update_manifest(
-                    manifest_file, manifest, 'phase3_review_test'
-                )
-                self._run_reviewers_and_testers_parallel(impl_results, task_dir)
-                manifest['phases']['phase3'] = {'status': 'completed'}
-                self._log_timeline(timeline_file, "PHASE", "review_test_done")
+                    self.logger.info(
+                        f"Phase 3: 목표 달성 리뷰 시작{round_label}"
+                    )
+                    self.notifier.notify_stage_started(
+                        f"Phase 3: 목표 달성 리뷰{round_label}"
+                    )
+                    self._log_timeline(
+                        timeline_file, "PHASE",
+                        f"review_start{round_label}"
+                    )
+                    self._update_manifest(
+                        manifest_file, manifest, 'phase3_review'
+                    )
 
-                self.notifier.notify_stage_completed("Phase 3: Review & Test")
+                    self._run_reviewers_and_testers_parallel(
+                        impl_results, task_dir
+                    )
+
+                    self._log_timeline(
+                        timeline_file, "PHASE",
+                        f"review_done{round_label}"
+                    )
+                    self.notifier.notify_stage_completed(
+                        f"Phase 3: 목표 달성 리뷰{round_label}"
+                    )
+
+                    # 리뷰 결과에서 미달성 구현 식별
+                    not_achieved = self._find_not_achieved_impls(
+                        impl_results, task_dir
+                    )
+
+                    if not not_achieved:
+                        self.logger.info("모든 구현이 목표를 달성했습니다.")
+                        break
+
+                    # 마지막 재시도였으면 루프 종료
+                    if retry_round >= self.max_review_retries:
+                        self.logger.warning(
+                            f"최대 재시도 횟수 도달. "
+                            f"미달성 구현 {len(not_achieved)}개 남음: "
+                            f"{[i['approach_id'] for i in not_achieved]}"
+                        )
+                        self._log_timeline(
+                            timeline_file, "WARNING",
+                            f"max_retries_reached: "
+                            f"{[i['approach_id'] for i in not_achieved]}"
+                        )
+                        break
+
+                    # 미달성 구현을 재구현
+                    self.logger.info(
+                        f"미달성 구현 {len(not_achieved)}개 재구현 시작: "
+                        f"{[i['approach_id'] for i in not_achieved]}"
+                    )
+                    self._log_timeline(
+                        timeline_file, "PHASE",
+                        f"reimplementation_start "
+                        f"(retry={retry_round + 1}, "
+                        f"targets={[i['approach_id'] for i in not_achieved]})"
+                    )
+                    self.notifier.notify_stage_started(
+                        f"재구현 (시도 {retry_round + 1}/"
+                        f"{self.max_review_retries})"
+                    )
+
+                    self._retry_not_achieved_impls(
+                        not_achieved, impl_results,
+                        task_id, task_dir, spec_content,
+                        project_context_path,
+                        pipeline_mode=pipeline_mode,
+                        api_contract_path=api_contract_path,
+                        architect_inline=architect_inline,
+                        architect_summary_path=architect_summary_path,
+                    )
+
+                    self._log_timeline(
+                        timeline_file, "PHASE",
+                        f"reimplementation_done (retry={retry_round + 1})"
+                    )
+                    self.notifier.notify_stage_completed(
+                        f"재구현 (시도 {retry_round + 1}/"
+                        f"{self.max_review_retries})"
+                    )
+
+                manifest['phases']['phase3'] = {
+                    'status': 'completed',
+                    'retries': retry_round,
+                }
             else:
-                self.logger.info("Phase 3 (Review & Test) 스킵 - 비활성화됨")
+                self.logger.info("Phase 3 (Review) 스킵 - 비활성화됨")
                 manifest['phases']['phase3'] = {'status': 'skipped'}
 
             # 성공한 구현 필터링
@@ -774,26 +860,154 @@ class Orchestrator:
             impl['review_success'] = None
             impl['review_workspace'] = ''
 
-        # Tester
-        if self.enable_test:
-            tester_prompt = self.prompts_dir / 'tester.md'
-            test_workspace = task_dir / f'test-{approach_id}'
-            test_workspace.mkdir(parents=True, exist_ok=True)
+        # Tester (비활성화: 목표 달성 리뷰로 대체)
+        # if self.enable_test:
+        #     tester_prompt = self.prompts_dir / 'tester.md'
+        #     test_workspace = task_dir / f'test-{approach_id}'
+        #     test_workspace.mkdir(parents=True, exist_ok=True)
+        #
+        #     tester = TesterAgent(
+        #         approach_id, test_workspace,
+        #         self.executor, tester_prompt
+        #     )
+        #     test_result = tester.run({
+        #         'impl_path': impl_path,
+        #         'approach': impl.get('approach', {}),
+        #         'impl_context': impl_context,
+        #     })
+        #     impl['test_success'] = test_result['success']
+        #     impl['test_workspace'] = str(test_workspace)
+        # else:
+        #     impl['test_success'] = None
+        #     impl['test_workspace'] = ''
+        impl['test_success'] = None
+        impl['test_workspace'] = ''
 
-            tester = TesterAgent(
-                approach_id, test_workspace,
-                self.executor, tester_prompt
+    # ── Phase 3 재시도: 미달성 구현 식별 및 재구현 ──────────────
+
+    def _find_not_achieved_impls(
+        self,
+        impl_results: List[Dict],
+        task_dir: Path
+    ) -> List[Dict]:
+        """리뷰 결과에서 목표 미달성(not_achieved) 구현을 찾는다."""
+        not_achieved = []
+
+        for impl in impl_results:
+            if not impl.get('success'):
+                continue
+            if not impl.get('review_success'):
+                continue
+
+            review_ws = impl.get('review_workspace', '')
+            if not review_ws:
+                continue
+
+            metrics = build_review_metrics(Path(review_ws))
+            if not metrics.get('available'):
+                continue
+
+            recommendation = metrics.get('recommendation', 'unknown')
+            impl['review_verdict'] = recommendation
+
+            if recommendation == 'not_achieved':
+                not_achieved.append(impl)
+                self.logger.info(
+                    f"impl-{impl['approach_id']}: 목표 미달성 → 재시도 대상"
+                )
+            elif recommendation == 'partial':
+                not_achieved.append(impl)
+                self.logger.info(
+                    f"impl-{impl['approach_id']}: 부분 달성 → 재시도 대상"
+                )
+            else:
+                self.logger.info(
+                    f"impl-{impl['approach_id']}: "
+                    f"목표 달성 ({recommendation})"
+                )
+
+        return not_achieved
+
+    def _retry_not_achieved_impls(
+        self,
+        not_achieved: List[Dict],
+        impl_results: List[Dict],
+        task_id: str,
+        task_dir: Path,
+        spec_content: str,
+        project_context_path: str = '',
+        pipeline_mode: str = 'alternative',
+        api_contract_path: str = '',
+        architect_inline: str = '',
+        architect_summary_path: str = '',
+    ) -> None:
+        """미달성 구현을 리뷰 피드백과 함께 재구현한다."""
+        for impl in not_achieved:
+            approach_id = impl['approach_id']
+            approach = impl.get('approach', {})
+            review_ws = impl.get('review_workspace', '')
+
+            # 리뷰 피드백 읽기
+            review_feedback = ''
+            if review_ws:
+                review_path = Path(review_ws) / 'review.md'
+                if review_path.exists():
+                    review_feedback = review_path.read_text(encoding='utf-8')
+
+            # 기존 worktree에서 재구현 (같은 브랜치에서 계속)
+            worktree_path = impl.get('worktree_path', '')
+            if not worktree_path or not Path(worktree_path).exists():
+                self.logger.error(
+                    f"impl-{approach_id}: worktree 없음, 재시도 스킵"
+                )
+                continue
+
+            self.logger.info(
+                f"impl-{approach_id}: 리뷰 피드백 기반 재구현 시작"
             )
-            test_result = tester.run({
-                'impl_path': impl_path,
-                'approach': impl.get('approach', {}),
-                'impl_context': impl_context,
-            })
-            impl['test_success'] = test_result['success']
-            impl['test_workspace'] = str(test_workspace)
-        else:
-            impl['test_success'] = None
-            impl['test_workspace'] = ''
+
+            implementer = ImplementerAgent(
+                approach_id=approach_id,
+                workspace=Path(worktree_path),
+                executor=self.executor,
+                prompt_file=self.prompts_dir / 'implementer.md'
+            )
+
+            # 리뷰 피드백을 포함한 재구현 컨텍스트 구성
+            retry_context = {
+                'approach': approach,
+                'spec_content': spec_content,
+                'project_context_path': project_context_path,
+                'pipeline_mode': pipeline_mode,
+                'api_contract_path': api_contract_path,
+                'architect_context': architect_inline,
+                'architect_summary_path': architect_summary_path,
+                'retry': True,
+                'review_feedback': review_feedback,
+            }
+
+            impl_result = implementer.run(retry_context)
+
+            # 변경 요약 업데이트
+            if impl_result['success']:
+                try:
+                    change_summary = self.git_manager.get_change_summary(
+                        Path(worktree_path)
+                    )
+                    impl['change_summary'] = change_summary
+                except GitError as e:
+                    self.logger.warning(f"변경 요약 실패: {e}")
+
+            impl['success'] = impl_result['success']
+
+            # 이전 리뷰 workspace 정리 (재리뷰를 위해)
+            if review_ws and Path(review_ws).exists():
+                old_review = Path(review_ws)
+                backup_name = f"{old_review.name}-prev"
+                backup_path = old_review.parent / backup_name
+                if backup_path.exists():
+                    shutil.rmtree(backup_path)
+                old_review.rename(backup_path)
 
     # ── Phase 4: 통합 (concern 모드) ─────────────────────────
 

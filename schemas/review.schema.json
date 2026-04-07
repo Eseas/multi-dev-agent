@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Review",
-  "description": "Code review results by skill-reviewer. Input for skill-comparator.",
+  "description": "Goal achievement review results by skill-reviewer. Input for skill-comparator.",
   "type": "object",
   "required": ["task_id", "approach_id", "approach_name", "created_at", "overall_score", "recommendation", "scores", "findings", "summary"],
   "properties": {
@@ -28,43 +28,57 @@
       "type": "number",
       "minimum": 1,
       "maximum": 5,
-      "description": "Overall score (1-5)"
+      "description": "Overall goal achievement score (1-5)"
     },
 
     "recommendation": {
       "type": "string",
-      "enum": ["recommended", "conditional", "not_recommended"],
-      "description": "Overall recommendation"
+      "enum": ["achieved", "partial", "not_achieved"],
+      "description": "Goal achievement verdict"
     },
 
     "scores": {
       "type": "object",
       "description": "Per-perspective scores",
-      "required": ["code_quality", "architecture", "security", "performance", "testability"],
+      "required": ["requirement_fulfillment", "approach_fidelity", "success_criteria", "completeness"],
       "properties": {
-        "code_quality": { "type": "number", "minimum": 1, "maximum": 5 },
-        "architecture": { "type": "number", "minimum": 1, "maximum": 5 },
-        "security": { "type": "number", "minimum": 1, "maximum": 5 },
-        "performance": { "type": "number", "minimum": 1, "maximum": 5 },
-        "testability": { "type": "number", "minimum": 1, "maximum": 5 }
+        "requirement_fulfillment": { "type": "number", "minimum": 1, "maximum": 5 },
+        "approach_fidelity": { "type": "number", "minimum": 1, "maximum": 5 },
+        "success_criteria": { "type": "number", "minimum": 1, "maximum": 5 },
+        "completeness": { "type": "number", "minimum": 1, "maximum": 5 }
+      }
+    },
+
+    "requirements_checklist": {
+      "type": "array",
+      "description": "Checklist of each requirement from the spec",
+      "items": {
+        "type": "object",
+        "required": ["requirement", "fulfilled", "note"],
+        "properties": {
+          "requirement": { "type": "string", "description": "Requirement from the planning spec" },
+          "fulfilled": { "type": "boolean", "description": "Whether this requirement was met" },
+          "note": { "type": "string", "description": "Explanation of fulfillment status" }
+        }
       }
     },
 
     "findings": {
       "type": "array",
-      "description": "All review findings",
+      "description": "Goal achievement findings",
       "items": {
         "type": "object",
-        "required": ["severity", "title", "location", "description", "suggestion"],
+        "required": ["status", "title", "description"],
         "properties": {
-          "severity": {
+          "status": {
             "type": "string",
-            "enum": ["critical", "major", "minor"]
+            "enum": ["achieved", "partial", "not_achieved"],
+            "description": "Achievement status of this goal/requirement"
           },
           "title": { "type": "string" },
-          "location": {
+          "requirement": {
             "type": "string",
-            "description": "File path and line number. e.g. src/auth.py:42"
+            "description": "Related requirement from the planning spec"
           },
           "description": { "type": "string" },
           "impact": { "type": "string" },
@@ -75,7 +89,7 @@
 
     "strengths": {
       "type": "array",
-      "description": "Notable strengths of this implementation",
+      "description": "Goals that were well achieved",
       "items": { "type": "string" }
     },
 
@@ -91,7 +105,7 @@
 
     "summary": {
       "type": "string",
-      "description": "2-3 sentence overall assessment"
+      "description": "2-3 sentence overall goal achievement assessment"
     }
   }
 }

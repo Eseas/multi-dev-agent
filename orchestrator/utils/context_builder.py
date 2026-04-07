@@ -232,6 +232,7 @@ def build_review_metrics(review_workspace: Path) -> Dict[str, Any]:
     """review.md에서 구조화된 리뷰 메트릭을 추출한다.
 
     regex 기반 파싱으로 AI 비용 없이 동작.
+    목표 달성 리뷰 형식에 맞춰 파싱한다.
 
     Args:
         review_workspace: 리뷰 워크스페이스 디렉토리 (review.md 포함)
@@ -248,34 +249,32 @@ def build_review_metrics(review_workspace: Path) -> Dict[str, Any]:
 
     metrics: Dict[str, Any] = {'available': True}
 
-    # 종합 점수: "종합 점수: X/5점" 또는 "**종합 점수**: X/5점"
+    # 달성도 점수: "달성도 점수: X/5점" 또는 "**달성도 점수**: X/5점"
+    # 하위 호환: "종합 점수" 패턴도 지원
     score_match = re.search(
-        r'종합\s*점수[:\s]*(\d+(?:\.\d+)?)\s*/\s*5', content
+        r'(?:달성도|종합)\s*점수[:\s]*(\d+(?:\.\d+)?)\s*/\s*5', content
     )
     metrics['overall_score'] = float(score_match.group(1)) if score_match else None
 
-    # 추천 여부
-    if '✅' in content and '추천' in content:
-        metrics['recommendation'] = 'recommended'
-    elif '⚠️' in content:
-        metrics['recommendation'] = 'conditional'
-    elif '❌' in content and ('비추천' in content or '추천' in content):
-        metrics['recommendation'] = 'not_recommended'
+    # 판정: 달성 / 부분 달성 / 미달성
+    if '✅' in content and '달성' in content:
+        metrics['recommendation'] = 'achieved'
+    elif '⚠️' in content and '부분' in content:
+        metrics['recommendation'] = 'partial'
+    elif '❌' in content and '미달성' in content:
+        metrics['recommendation'] = 'not_achieved'
     else:
         metrics['recommendation'] = 'unknown'
 
-    # 이슈 개수 (Critical/Major/Minor)
-    metrics['critical_issues'] = len(
-        re.findall(r'\[Critical\]', content, re.IGNORECASE)
+    # 요구사항 충족 체크리스트 카운트
+    metrics['requirements_met'] = len(
+        re.findall(r'\|\s*✅\s*\|', content)
     )
-    metrics['major_issues'] = len(
-        re.findall(r'\[Major\]', content, re.IGNORECASE)
-    )
-    metrics['minor_issues'] = len(
-        re.findall(r'\[Minor\]', content, re.IGNORECASE)
+    metrics['requirements_unmet'] = len(
+        re.findall(r'\|\s*❌\s*\|', content)
     )
 
-    # 관점별 점수 테이블: "| 코드 품질 | X/5 |"
+    # 관점별 점수 테이블: "| 요구사항 충족도 | X/5 |"
     aspect_scores = {}
     for match in re.finditer(
         r'\|\s*([^|]+?)\s*\|\s*(\d+(?:\.\d+)?)\s*/\s*5',
@@ -289,13 +288,20 @@ def build_review_metrics(review_workspace: Path) -> Dict[str, Any]:
     if aspect_scores:
         metrics['aspect_scores'] = aspect_scores
 
-    # 장점 (상위 3개)
-    strengths = _extract_bold_items_after(content, '장점', max_items=3)
+    # 달성된 목표 (상위 3개)
+    strengths = _extract_bold_items_after(content, '달성된 목표', max_items=3)
+    if not strengths:
+        # 하위 호환: 기존 "장점" 섹션도 시도
+        strengths = _extract_bold_items_after(content, '장점', max_items=3)
     if strengths:
         metrics['strengths'] = strengths
 
-    # 약점/이슈 제목 (상위 3개)
-    weaknesses = _extract_issue_titles(content, max_items=3)
+    # 미달성/부분 달성 목표 제목 (상위 3개)
+    weaknesses = _extract_bold_items_after(content, '미달성 목표', max_items=3)
+    if not weaknesses:
+        weaknesses = _extract_bold_items_after(content, '부분적으로 달성', max_items=3)
+    if not weaknesses:
+        weaknesses = _extract_issue_titles(content, max_items=3)
     if weaknesses:
         metrics['weaknesses'] = weaknesses
 
@@ -411,35 +417,35 @@ def format_phase3_inline(summary: Dict[str, Any]) -> str:
         lines.append(f'### impl-{aid}: {name}')
         lines.append('')
 
-        # 리뷰 메트릭
+        # 리뷰 메트릭 (목표 달성 리뷰)
         review = entry.get('review', {})
         if review.get('available'):
             score = review.get('overall_score')
             score_str = f'{score}/5' if score is not None else 'N/A'
             rec = review.get('recommendation', 'unknown')
             rec_map = {
-                'recommended': '✅ 추천',
-                'conditional': '⚠️ 조건부',
-                'not_recommended': '❌ 비추천',
+                'achieved': '✅ 달성',
+                'partial': '⚠️ 부분 달성',
+                'not_achieved': '❌ 미달성',
             }
             rec_str = rec_map.get(rec, rec)
 
-            critical = review.get('critical_issues', 0)
-            major = review.get('major_issues', 0)
-            minor = review.get('minor_issues', 0)
+            req_met = review.get('requirements_met', 0)
+            req_unmet = review.get('requirements_unmet', 0)
 
-            lines.append(f'**리뷰**: 점수 {score_str}, {rec_str}')
-            lines.append(f'  이슈: Critical {critical}개, Major {major}개, Minor {minor}개')
+            lines.append(f'**목표 달성 리뷰**: 달성도 {score_str}, {rec_str}')
+            if req_met or req_unmet:
+                lines.append(f'  요구사항: 충족 {req_met}개, 미충족 {req_unmet}개')
 
             strengths = review.get('strengths', [])
             if strengths:
-                lines.append(f'  장점: {"; ".join(strengths)}')
+                lines.append(f'  달성 목표: {"; ".join(strengths)}')
 
             weaknesses = review.get('weaknesses', [])
             if weaknesses:
-                lines.append(f'  약점: {"; ".join(weaknesses)}')
+                lines.append(f'  미달성: {"; ".join(weaknesses)}')
         else:
-            lines.append('**리뷰**: (없음)')
+            lines.append('**목표 달성 리뷰**: (없음)')
 
         # 테스트 메트릭
         test = entry.get('test', {})

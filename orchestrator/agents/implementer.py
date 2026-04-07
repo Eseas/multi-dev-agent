@@ -59,10 +59,24 @@ class ImplementerAgent(BaseAgent):
                 'error': '접근법이 제공되지 않았습니다'
             }
 
-        logger.info(f"Implementer {self.approach_id}: 구현 시작")
+        is_retry = context.get('retry', False)
+        review_feedback = context.get('review_feedback', '')
+
+        if is_retry:
+            logger.info(
+                f"Implementer {self.approach_id}: "
+                f"리뷰 피드백 기반 재구현 시작"
+            )
+        else:
+            logger.info(f"Implementer {self.approach_id}: 구현 시작")
 
         # 접근법 설명 포매팅
         approach_desc = self._format_approach(approach)
+
+        # 재시도 시 리뷰 피드백을 포함한 추가 지시사항 구성
+        retry_instruction = ''
+        if is_retry and review_feedback:
+            retry_instruction = self._build_retry_instruction(review_feedback)
 
         # 프롬프트 로드 및 포매팅
         prompt = self.load_prompt(
@@ -76,6 +90,10 @@ class ImplementerAgent(BaseAgent):
             architect_context=architect_context,
             architect_summary_path=architect_summary_path,
         )
+
+        # 재시도인 경우 프롬프트 끝에 리뷰 피드백 추가
+        if retry_instruction:
+            prompt = prompt + '\n\n' + retry_instruction
 
         # Claude 실행 (git worktree = 타겟 프로젝트 내부에서)
         output_file = self.workspace / '.multi-agent' / 'implementation.log'
@@ -129,3 +147,24 @@ class ImplementerAgent(BaseAgent):
                 lines.append(f"  - {trade_off}")
 
         return '\n'.join(lines)
+
+    def _build_retry_instruction(self, review_feedback: str) -> str:
+        """리뷰 피드백을 기반으로 재구현 지시사항을 생성한다."""
+        return f"""---
+
+## ⚠️ 재구현 지시사항
+
+이전 구현이 목표 달성 리뷰에서 **미달성 또는 부분 달성** 판정을 받았습니다.
+아래 리뷰 피드백을 참고하여, 미달성된 요구사항을 **반드시 해결**하세요.
+
+### 이전 리뷰 피드백
+
+{review_feedback}
+
+### 주의사항
+
+1. 리뷰에서 지적된 **미달성 요구사항**에 집중하세요
+2. 이미 달성된 부분은 유지하면서 부족한 부분만 보완하세요
+3. 기존 코드 위에서 수정하세요 (처음부터 다시 작성하지 마세요)
+4. work-done.md를 업데이트하여 수정 내용을 반영하세요
+"""
